@@ -1,0 +1,90 @@
+# =============================================================================
+# Terraform Variables Configuration Example
+# =============================================================================
+# 
+# Copy this file to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Then edit terraform.tfvars with your actual credentials and settings
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Databricks Configuration (REQUIRED)
+# -----------------------------------------------------------------------------
+
+databricks_host  = "https://your-workspace.cloud.databricks.com"
+databricks_token = "dapi1234567890abcdef"  # Your Databricks PAT
+
+# -----------------------------------------------------------------------------
+# Lakebase Configuration (REQUIRED)
+# -----------------------------------------------------------------------------
+
+lakebase_endpoint = "ep-autumn-fire-d318blbk.database.eu-west-1.cloud.databricks.com"
+lakebase_database = "benchmark"
+lakebase_user     = "fraud_benchmark_user"
+lakebase_password = "your_secure_password_here"
+
+# -----------------------------------------------------------------------------
+# AWS Configuration
+# -----------------------------------------------------------------------------
+
+aws_region = "eu-west-1"  # Match your Lakebase region
+
+# -----------------------------------------------------------------------------
+# Workload Configuration
+# -----------------------------------------------------------------------------
+
+workload_name = "fraud_detection"  # Or "generic_benchmark", "e_commerce", etc.
+
+# For auto-generated workloads:
+num_tables         = 30
+features_per_table = 5
+rows_per_table     = 100000000  # 100M rows
+use_binpacking     = true
+
+# -----------------------------------------------------------------------------
+# Databricks Job Configuration
+# -----------------------------------------------------------------------------
+
+job_cluster_size = "m6i.2xlarge"  # Or "r6i.2xlarge" for memory-optimized
+job_num_workers  = 4              # Number of worker nodes
+spark_version    = "16.4.x-scala2.12"
+
+# -----------------------------------------------------------------------------
+# Notebook Paths
+# -----------------------------------------------------------------------------
+
+notebook_base_path = "/Users/your.email@company.com"
+
+# -----------------------------------------------------------------------------
+# Unity Catalog Configuration (for bulk loading)
+# -----------------------------------------------------------------------------
+
+unity_catalog_name   = "main"
+unity_catalog_schema = "default"
+unity_catalog_volume = "benchmark_data"
+
+# Row count threshold for bulk load (COPY) vs JDBC
+bulk_load_threshold  = 100000000  # 100M rows
+
+# -----------------------------------------------------------------------------
+# Deployment Options
+# -----------------------------------------------------------------------------
+
+deploy_data_loading_jobs = true
+deploy_benchmark_jobs    = true
+
+# Lakebase Terraform support (set to true when available)
+enable_lakebase_resources = false
+
+# -----------------------------------------------------------------------------
+# Tags
+# -----------------------------------------------------------------------------
+
+tags = {
+  Project     = "lakebase-benchmark"
+  Team        = "data-engineering"
+  Environment = "benchmark"
+  Owner       = "your.email@company.com"
+}
+
