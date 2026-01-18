@@ -1,6 +1,49 @@
-# Configuration (contains secrets)
+# =============================================================================
+# CREDENTIALS AND SECRETS - NEVER COMMIT THESE!
+# =============================================================================
+
+# Configuration files with credentials
 config.py
+config.local.py
+config.*.py
+!config.template.py
+
+# Environment files
 .env
+.env.*
+!.env.example
+
+# Databricks tokens and credentials
+.databrickscfg
+.databricks/
+.dbx/
+
+# AWS credentials
+.aws/
+credentials
+*.pem
+*.key
+
+# Terraform sensitive files
+terraform.tfvars
+terraform.tfvars.json
+*.tfvars
+!terraform.tfvars.example
+*.auto.tfvars
+*.auto.tfvars.json
+
+# Secrets and keys
+secrets/
+secrets.json
+secrets.yaml
+secrets.yml
+*.secret
+*.secrets
+*_secret.*
+*_secrets.*
+*_credentials.*
+credentials.*
+!credentials.example.*
 
 # Python
 __pycache__/

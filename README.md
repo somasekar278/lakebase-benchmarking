@@ -1,516 +1,347 @@
-# 🚀 Lakebase Benchmarking Framework
+# 🚀 Lakebase Feature Serving Benchmark Framework
 
-A comprehensive, production-ready framework for benchmarking database performance and cost across multiple backends (Lakebase, DynamoDB, Aurora, Cosmos DB) for real-time feature store and fraud detection workloads.
+**Production-ready benchmarking framework for Lakebase feature serving with optimized bulk loading.**
 
 [![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Terraform](https://img.shields.io/badge/terraform-1.0+-purple.svg)](https://www.terraform.io/)
 [![Databricks](https://img.shields.io/badge/databricks-runtime-orange.svg)](https://databricks.com/)
 
 ---
 
-## 🎯 Overview
+## 🎯 What is This?
 
-This framework enables you to:
+**Comprehensive framework for:**
+1. **Bulk loading** billions of rows into Lakebase (4-10x faster than JDBC)
+2. **Benchmarking** feature serving performance vs DynamoDB
+3. **Production optimization** with cache warming and connection pooling
+4. **Publication-ready reports** with component-level analysis
 
-✅ **Benchmark multiple backends** - Compare Lakebase, DynamoDB, Aurora, and Cosmos DB  
-✅ **Track performance AND cost** - Full TCO analysis with transparent pricing  
-✅ **Generate flexible schemas** - Any combination of tables × features  
-✅ **Load data efficiently** - Bulk loading 10-100x faster than JDBC  
-✅ **Compare fairly** - Same workload across all backends  
-✅ **Make data-driven decisions** - Performance per dollar metrics  
-
-**Primary Use Case**: Real-time feature stores and fraud detection with strict latency SLAs (P99 < 120ms).
+**Target Use Case:** Feature store benchmarking (30 tables, 16B+ rows, 30-40ms p99 latency)
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
+### **For Bulk Loading (Production Scale):**
 
 ```bash
-pip install -r requirements.txt
+# 1. Configure credentials
+# Edit config.py with your Lakebase connection details
+
+# 2. Deploy to Databricks
+databricks bundle deploy -t dev
+
+# 3. Run bulk load for 30 fraud tables (16.6B rows)
+databricks bundle run fraud_load_all_tables -t dev
+
+# 4. Build indexes (optimized, ~3-4 hours for 11 tables)
+#    With automatic tuning: 3x faster than default PostgreSQL settings!
+databricks bundle run fraud_build_indexes -t dev
+
+# Done! ✅ Ready for benchmarking
 ```
 
-### 2. Configure Your Environment
+**Load Performance:**
+- 2B rows in ~20-30 minutes
+- 8 concurrent workers
+- Stage-Index-Swap pattern (no downtime)
+- Automatic checkpointing (resume on failure)
+
+### **For Feature Serving Benchmarks:**
 
 ```bash
-# Copy template and edit with your credentials
-cp config.template.py config.py
-# Edit config.py with your connection details
+# 🚀 AUTOMATED: Single command runs entire workflow
+databricks bundle run fraud_benchmark_end_to_end -t dev
+
+# Runs automatically:
+# 1. Verify tables (10 min)
+# 2. Quick baseline (30 min)  
+# 3. Production benchmark (2 hours)
+# 4. Generate report (1 hour)
+# Total: ~3.5 hours fully automated
+
+# Done! ✅ Complete results + publication-ready charts
 ```
 
-### 3. List Available Backends
+**Or run individual steps:**
+```bash
+databricks bundle run fraud_verify_tables -t dev
+databricks bundle run fraud_benchmark_feature_serving -t dev
+databricks bundle run fraud_production_benchmark -t dev
+```
+
+**Expected Performance:**
+- P50: 37ms (vs DynamoDB 30ms, +23%)
+- P99: 53ms (vs DynamoDB 79ms, **-33%** ✅)
+- Cache hit ratio: 99.8%
+- 30 tables, single round-trip
+
+### **For Database Migration (Workspace → Workspace):**
 
 ```bash
-python run_benchmark.py --list-backends
+# 1. Dump current database to UC Volume (30-60 min)
+databricks bundle run fraud_dump_database -t dev
+
+# 2. In new workspace, configure connection to new Lakebase endpoint
+# Edit config.py with new endpoint details
+
+# 3. Restore from UC Volume (1-2 hours)
+databricks bundle run fraud_restore_database -t dev
+
+# Done! ✅ All 30 tables + indexes migrated (2-3 hours vs 30+ hours re-load)
 ```
 
-### 4. Generate a Schema
+**Migration Benefits:**
+- ✅ Preserves all data, indexes, constraints
+- ✅ ~10x faster than re-loading (2-3 hours vs 30+ hours)
+- ✅ Compressed backup (~500-800 GB vs 3TB uncompressed)
+- ✅ Parallel restore for faster recovery
 
-```bash
-# Generate 30 tables × 5 features = 150 features
-python run_benchmark.py --generate-schema \
-    --num-tables 30 \
-    --features-per-table 5 \
-    --output-dir generated/fraud_30t
-```
-
-### 5. Load Data (via Databricks)
-
-```bash
-# Deploy infrastructure
-cd terraform && terraform init && terraform apply
-
-# Use Databricks notebooks to load data
-# notebooks/data_loading/load_flexible_schema.py
-# or notebooks/data_loading/load_bulk_copy.py (for 100M+ rows)
-```
-
-### 6. Run Benchmarks
-
-```bash
-# Run benchmark on Lakebase
-python run_benchmark.py --backend lakebase \
-    --num-tables 30 \
-    --features-per-table 5
-
-# Compare backends with cost analysis
-python run_benchmark.py --backends lakebase dynamodb \
-    --compare --show-costs
-```
+See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for detailed instructions.
 
 ---
 
-## 📦 What's Included
+## 📊 Architecture
 
-### Core Components
+### **Bulk Loading (Stage-Index-Swap Pattern)**
 
-| Component | Description |
-|-----------|-------------|
-| **CLI Tool** (`run_benchmark.py`) | Unified interface for all operations |
-| **Multi-Backend Support** | Lakebase, DynamoDB, Aurora, Cosmos DB |
-| **Cost Tracking** | Performance + cost analysis |
-| **Bulk Loading** | 10-100x faster than JDBC |
-| **Flexible Schemas** | Generate any workload |
-| **Terraform Deployment** | Infrastructure as Code |
+```
+Phase 1: Pure COPY (No Indexes)
+  Table 1: Generate CSV → COPY (8 workers parallel)
+  Table 2: Generate CSV → COPY
+  ... (all 30 tables)
 
-### Key Features
+Phase 2: Parallel Index Builds
+  Table 1: CREATE INDEX CONCURRENTLY
+  Table 2: CREATE INDEX CONCURRENTLY
+  ... (8 parallel builds)
+```
 
-#### 1. 🎯 Multi-Backend Benchmarking
-- **Lakebase** (PostgreSQL) - Fully implemented
-- **DynamoDB** - Structure ready
-- **Aurora** - Placeholder
-- **Cosmos DB** - Placeholder
-- Easy to add new backends (4 steps)
+**Key Features:**
+- ✅ Checkpointing (skip completed tables)
+- ✅ No duplicate loads (idempotent)
+- ✅ Stage tables always dropped
+- ✅ Production tables never dropped
+- ✅ Handles 1B+ row tables efficiently
 
-#### 2. 💰 Cost Analysis
-- Track data loading, query execution, and storage costs
-- Backend-specific pricing models
-- TCO projections (1 year, 3 years)
-- Cost-efficiency metrics (performance per dollar)
-- Transparent, verifiable pricing
+### **Feature Serving (Optimized Pattern)**
 
-#### 3. ⚡ High-Performance Data Loading
-- **PostgreSQL COPY** - 10-30x faster than JDBC
-- **UNLOGGED tables** - Additional 2-3x speedup (optional)
-- **Unity Catalog volumes** - Seamless integration
-- Automatic method selection based on data size
+```python
+from utils.feature_server import LakebaseFeatureServer
 
-#### 4. 🔧 Flexible Schema Generation
-- Generate N tables × M features on demand
-- Realistic fraud detection feature names
-- Automatic stored procedure creation
-- Python configuration export
+# Initialize with automatic optimizations
+server = LakebaseFeatureServer(
+    lakebase_config=config,
+    table_schemas=schemas,
+    pool_size=10,          # Fixed pool
+    enable_warmup=True     # Auto cache warming
+)
 
-#### 5. 📊 Comprehensive Metrics
-- Latency: P50, P95, P99, Max, Mean, StdDev
-- Consistency: Coefficient of Variation
-- Throughput: Operations per second
-- Cost breakdown by category
-- Visual latency distributions
+# Single round-trip for 30 tables
+features = server.get_features(hashkey, table_names)
+```
+
+**Optimizations:**
+- ✅ psycopg3 explicit pipelining (single network flush)
+- ✅ Separated execute/fetch (minimizes round-trips)
+- ✅ Connection-local prepared statements
+- ✅ Fixed-size connection pool (no cache eviction)
+- ✅ Automatic cache warming (prevents cold starts)
 
 ---
 
-## 📁 Project Structure
+## 📊 Key Features
+
+### **Bulk Loading:**
+✅ **Stage-Index-Swap pattern** - No downtime, optimal performance  
+✅ **Parallel COPY** - 8 concurrent workers, handles 1B+ rows  
+✅ **Checkpointing** - Resume on failure, never reload completed tables  
+✅ **Idempotent** - Safe to re-run, automatic skip logic  
+
+### **Feature Serving:**
+✅ **Optimized query pattern** - Single network flush for 30 tables  
+✅ **37ms p50, 53ms p99** - Beats DynamoDB on tail latency  
+✅ **Cache warming** - Prevents 600ms+ cold-start penalty  
+✅ **Production-ready** - Connection pooling, error handling, monitoring
+
+### **Benchmarking:**
+✅ **Component-level analysis** - Network, query, transfer breakdown  
+✅ **Publication-ready reports** - 13+ visualizations, executive summaries  
+✅ **Cache metrics** - Hit ratios, buffer stats, index usage  
+✅ **vs DynamoDB** - Direct comparison with baseline
+
+---
+
+## 📂 Project Structure
 
 ```
 lakebase-benchmarking/
-├── README.md                          ← You are here
-├── CLI_GUIDE.md                       ← Complete CLI reference
-├── config.py                          ← Configuration (gitignored)
-├── config.template.py                 ← Configuration template
-├── run_benchmark.py                   ← Main CLI tool ⭐
 │
-├── core/                              ← Framework core
-│   ├── backend.py                     ← Abstract backend system
-│   └── workload.py                    ← Workload definitions
+├── README.md                         # This file
+├── requirements.txt                  # Dependencies
+├── config.py                         # Configuration (gitignored)
+├── databricks.yml                    # DABs deployment config
 │
-├── backends/                          ← Backend implementations
-│   ├── lakebase.py                    ← Lakebase (PostgreSQL)
-│   ├── dynamodb.py                    ← DynamoDB
-│   ├── aurora.py                      ← Aurora (placeholder)
-│   └── cosmosdb.py                    ← Cosmos DB (placeholder)
+├── notebooks/                        # Databricks notebooks
+│   ├── load_schema_from_ddl.py       # Bulk loading
+│   ├── build_missing_indexes.py      # Index builder
+│   ├── verify_all_tables.py          # Pre-deployment check
+│   ├── generate_benchmark_report.py  # Full benchmark report
+│   └── benchmarks/
+│       └── benchmark_generic.py      # Feature serving benchmark
 │
-├── utils/                             ← Utilities
-│   ├── cost_tracker.py                ← Cost tracking
-│   ├── bulk_load.py                   ← High-performance loading
-│   ├── lakebase_connection.py         ← Connection pooling
-│   └── metrics.py                     ← Performance metrics
+├── utils/                            # Core utilities
+│   ├── feature_server.py             # ⭐ Optimized feature serving
+│   ├── instrumented_feature_server.py# Component-level timing
+│   ├── schema_loader.py              # Schema + data generation
+│   ├── cache_warming.py              # Cache warming automation
+│   ├── lakebase_connection.py        # Connection management
+│   └── metrics.py                    # Performance metrics
 │
-├── scripts/                           ← Setup scripts
-│   ├── setup/
-│   │   ├── flexible_schema_generator.py  ← Schema generator
-│   │   ├── schema.py                     ← Predefined schemas
-│   │   ├── setup_lakebase.sql            ← Database setup
-│   │   ├── setup_stored_proc.py          ← Stored procedures
-│   │   └── setup_data_api.py             ← Data API setup
-│   └── verification/
-│       ├── verify_setup.py               ← Pre-flight checks
-│       └── verify_data.py                ← Data validation
+├── backends/                         # Database backends
+│   └── lakebase.py                   # Lakebase implementation
 │
-├── notebooks/                         ← Databricks notebooks
-│   ├── benchmarks/
-│   │   ├── benchmark_lakebase.py         ← Lakebase benchmark
-│   │   ├── benchmark_flexible.py         ← Flexible benchmark
-│   │   └── benchmark_flexible_with_data_api.py  ← Data API benchmark
-│   └── data_loading/
-│       ├── load_flexible_schema.py       ← JDBC loading
-│       ├── load_bulk_copy.py             ← Bulk loading (COPY)
-│       └── load_bulk_copy_unlogged.py    ← Bulk loading (UNLOGGED)
+├── core/                             # Core abstractions
+│   ├── backend.py                    # Backend interface
+│   └── workload.py                   # Workload definitions
 │
-├── terraform/                         ← Infrastructure as Code
-│   ├── main.tf                        ← Databricks provider
-│   ├── variables.tf                   ← Configuration variables
-│   ├── jobs_data_loading.tf           ← Data loading jobs
-│   ├── jobs_benchmarks.tf             ← Benchmark jobs
-│   ├── jobs_bulk_loading.tf           ← Bulk loading jobs
-│   └── README.md                      ← Terraform guide
+├── resources/                        # DABs resources
+│   ├── jobs.yml                      # Job definitions
+│   └── volumes.yml                   # UC volume config
 │
-└── docs/                              ← Additional documentation
-    ├── SETUP.md                       ← Setup guide
-    ├── WORKFLOW.md                    ← Data loading workflow
-    ├── BINPACKING_STRATEGY.md         ← Binpacking explanation
-    ├── LESSONS_LEARNED.md             ← Key learnings
-    ├── OPTIMIZATION_IDEAS.md          ← Optimization tips
-    └── QUICK_REFERENCE.md             ← Command reference
+└── Documentation/
+    ├── BENCHMARKING.md               # ⭐ Benchmark guide
+    ├── PRODUCTION_GUIDE.md           # ⭐ Production deployment
+    ├── OPTIMIZATION_DETAILS.md       # Technical deep-dive
+    └── RCA_POSTGRESQL_63_CHAR_LIMIT.md  # Lessons learned
 ```
 
 ---
 
 ## 📚 Documentation
 
-### Getting Started
-- **[CLI_GUIDE.md](CLI_GUIDE.md)** - Complete CLI reference with examples
-- **[docs/SETUP.md](docs/SETUP.md)** - Detailed setup instructions
-- **[docs/WORKFLOW.md](docs/WORKFLOW.md)** - Data loading workflow
-
-### Framework Guides
-- **[FLEXIBLE_BENCHMARK_GUIDE.md](FLEXIBLE_BENCHMARK_GUIDE.md)** - Flexible schema framework
-- **[BACKEND_DESIGN.md](BACKEND_DESIGN.md)** - Multi-backend architecture
-- **[FRAMEWORK_DESIGN.md](FRAMEWORK_DESIGN.md)** - Overall design
-
-### Performance & Cost
-- **[COST_ANALYSIS_DESIGN.md](COST_ANALYSIS_DESIGN.md)** - Cost tracking and analysis
-- **[BULK_LOAD_GUIDE.md](BULK_LOAD_GUIDE.md)** - High-performance data loading
-- **[docs/BINPACKING_STRATEGY.md](docs/BINPACKING_STRATEGY.md)** - Query optimization
-
-### Reference
-- **[docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Command cheat sheet
-- **[docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md)** - Key insights
-- **[USAGE_EXAMPLES.md](USAGE_EXAMPLES.md)** - Code examples
-
-### Deployment
-- **[terraform/README.md](terraform/README.md)** - Terraform deployment guide
+| Document | Purpose |
+|----------|---------|
+| **[BENCHMARKING.md](BENCHMARKING.md)** | 📊 Benchmarking guide with report generation |
+| **[PRODUCTION_GUIDE.md](PRODUCTION_GUIDE.md)** | 🚀 Production deployment & cache warming |
+| **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** | 🔄 Database migration (pg_dump/restore) |
+| **[INDEX_OPTIMIZATION.md](INDEX_OPTIMIZATION.md)** | ⚡ 3x faster hybrid scheduling + memory-fraction |
+| **[INDEX_BUILD_BASELINE_RESULTS.md](INDEX_BUILD_BASELINE_RESULTS.md)** | 📊 Actual production build times (baseline for A/B test) |
+| **[OPTIMIZATION_DETAILS.md](OPTIMIZATION_DETAILS.md)** | 🔧 Technical deep-dive on query optimizations |
+| **[RCA_POSTGRESQL_63_CHAR_LIMIT.md](RCA_POSTGRESQL_63_CHAR_LIMIT.md)** | 📖 Lessons learned from 63-char bug |
 
 ---
 
-## 💻 CLI Commands
+## 🔧 Available DABs Jobs
 
-The framework provides a unified CLI (`run_benchmark.py`) for all operations:
-
-### List Backends
 ```bash
-python run_benchmark.py --list-backends
+# Bulk Loading
+databricks bundle run fraud_load_single_table -t dev   # Test single table
+databricks bundle run fraud_load_all_tables -t dev     # Load all 30 tables
+databricks bundle run fraud_build_indexes -t dev       # Build indexes (3-4 hours)
+
+# Verification
+databricks bundle run fraud_verify_tables -t dev       # Check all tables ready
+
+# Benchmarking (Automated)
+databricks bundle run fraud_benchmark_end_to_end -t dev  # 🚀 FULL WORKFLOW (3.5h)
+
+# Benchmarking (Individual Steps)
+databricks bundle run fraud_benchmark_feature_serving -t dev       # Quick baseline (10 min)
+databricks bundle run fraud_production_benchmark -t dev            # Concurrent tests (2h)
+databricks bundle run fraud_generate_benchmark_report -t dev       # Report with charts (1h)
+
+# Migration
+databricks bundle run fraud_dump_database -t dev       # Backup for migration (1h)
+databricks bundle run fraud_restore_database -t dev    # Restore from backup (2h)
 ```
 
-### Show Configuration
-```bash
-python run_benchmark.py --show-config
-```
-
-### Generate Schema
-```bash
-# Basic: 30 tables × 5 features
-python run_benchmark.py --generate-schema \
-    --num-tables 30 \
-    --features-per-table 5
-
-# Custom output directory
-python run_benchmark.py --generate-schema \
-    --num-tables 50 \
-    --features-per-table 3 \
-    --rows-per-table 100000000 \
-    --output-dir generated/custom_workload
-```
-
-### Run Benchmark
-```bash
-# Single backend
-python run_benchmark.py --backend lakebase \
-    --num-tables 30 \
-    --iterations 100
-
-# Multiple backends with comparison
-python run_benchmark.py --backends lakebase dynamodb \
-    --compare \
-    --show-costs \
-    --output comparison.json
-```
-
-**For complete CLI reference, see [CLI_GUIDE.md](CLI_GUIDE.md)**
+**For custom schemas**, use `notebooks/load_schema_from_ddl.py` directly in Databricks.
 
 ---
 
-## 🎯 Performance Comparison
+## 🏥 Troubleshooting
 
-### Lakebase vs DynamoDB (100M rows, 50GB, 100 queries)
+### **Issue: High p99 Latency**
+1. Check cache hit ratio (`fraud_verify_tables` output)
+2. Check for autovacuum: `SELECT * FROM pg_stat_activity WHERE query LIKE '%autovacuum%'`
+3. Check for sequential scans: `SELECT * FROM pg_stat_user_tables WHERE seq_scan > 0`
+4. Re-run cache warmup if needed
 
-| Backend | Data Loading | Queries | Storage | **Total** |
-|---------|-------------|---------|---------|-----------|
-| **Lakebase** | $0.92 | $0.009 | $0.021 | **$0.95** ✅ |
-| **DynamoDB** | $125.00 | $0.0006 | $0.034 | **$125.03** |
-| **Aurora** | $104.08 | $0.816 | $0.014 | **$104.91** |
-| **Cosmos DB** | $22.22 | $0.0003 | $0.034 | **$22.26** |
+### **Issue: Bulk Load Failure**
+1. Check Databricks job logs for specific error
+2. Verify Lakebase connectivity
+3. Check disk space in UC volume
+4. Resume with checkpointing (job will skip completed tables)
 
-**Key Insight**: Lakebase is **132x cheaper** for one-time benchmarks!
-
-### Data Loading Performance
-
-| Method | 100M Rows | 1B Rows | Crash-Safe |
-|--------|-----------|---------|------------|
-| **JDBC** | ~30-45 min | 5-10 hours ❌ | ✅ |
-| **COPY (LOGGED)** | ~5-10 min | 20-30 min | ✅ |
-| **COPY (UNLOGGED)** | ~2-5 min | 10-15 min | ❌ |
-
-**Speedup**: UNLOGGED is **96x faster** than JDBC for 100M rows!
-
----
-
-## 🔧 Configuration
-
-All settings are in `config.py`:
-
-```python
-# Lakebase connection
-LAKEBASE_CONFIG = {
-    'host': 'your-lakebase-host.cloud.databricks.com',
-    'port': 5432,
-    'database': 'benchmark',
-    'user': 'fraud_benchmark_user',
-    'password': 'your-password',
-    'schema': 'features',
-}
-
-# Benchmark settings
-BENCHMARK_CONFIG = {
-    'num_warmup': 5,
-    'num_iterations': 100,
-    'keys_per_table': 25,
-}
-
-# Backend selection
-BACKEND_CONFIGS = {
-    'lakebase': {'enabled': True, ...},
-    'dynamodb': {'enabled': False, ...},  # Enable to test
-    'aurora': {'enabled': False, ...},
-    'cosmosdb': {'enabled': False, ...},
-}
-```
-
-**Copy `config.template.py` to `config.py` and edit with your credentials.**
+### **Issue: Index Build Takes Too Long**
+- Expected: ~3-4 hours for 11 tables (sequential, batch_size=1) with optimization
+- **NEW:** Automatic dynamic tuning (3x faster than default settings!)
+  - `maintenance_work_mem`: 12GB (vs default 64MB)
+  - `max_parallel_maintenance_workers`: 4 (vs default 2)
+- Check Lakebase CU allocation (32 CU / 64 GB RAM recommended)
+- Monitor with: `SELECT * FROM pg_stat_progress_create_index`
+- See [INDEX_OPTIMIZATION.md](INDEX_OPTIMIZATION.md) for details
 
 ---
 
-## 🛠️ Development
+## 🔒 Security
 
-### Adding a New Backend
+**Credential Protection:**
+- `config.py` is gitignored (contains credentials)
+- `.gitignore` blocks all sensitive files
+- `.gitattributes` provides additional safeguards
+- Pre-commit hook scans for secrets
 
-1. **Create backend class** in `backends/your_backend.py`
-2. **Implement abstract methods** from `core.backend.Backend`
-3. **Add cost model** in `utils/cost_tracker.py`
-4. **Register in config** in `config.py`
-
-See [BACKEND_DESIGN.md](BACKEND_DESIGN.md) for detailed guide.
-
-### Running Tests
-
-```bash
-# Verify setup
-python scripts/verification/verify_setup.py
-
-# Verify data loaded
-python scripts/verification/verify_data.py
-
-# Run quick schema generation test
-python run_benchmark.py --generate-schema \
-    --num-tables 5 \
-    --features-per-table 3 \
-    --rows-per-table 100000 \
-    --output-dir test_schema
-```
+**Never commit:**
+- `config.py`
+- `.env` files
+- Any files with passwords/secrets
 
 ---
 
-## 📊 Use Cases
+## 📊 Performance Summary
 
-### 1. Match Customer Workload
-Customer has: 30-50 tables, ~150 features, 79ms P99
+### **Bulk Loading (Production Scale):**
+| Table Size | Load Time | Throughput |
+|------------|-----------|------------|
+| 75M rows | 5 min | 250K rows/s |
+| 1B rows | 20-30 min | 550K rows/s |
+| 2B rows | 40-50 min | 660K rows/s |
 
-```bash
-python run_benchmark.py --generate-schema \
-    --num-tables 30 \
-    --features-per-table 5 \
-    --output-dir generated/customer_match
-```
+**Includes:** Data generation + COPY + Index build
 
-### 2. Quick Local Testing
-```bash
-python run_benchmark.py --generate-schema \
-    --num-tables 5 \
-    --features-per-table 3 \
-    --rows-per-table 100000 \
-    --output-dir test_small
-```
+### **Feature Serving (30 Tables):**
+| Metric | Lakebase | DynamoDB | Verdict |
+|--------|----------|----------|---------|
+| P50 | 37ms | 30ms | Comparable |
+| P99 | 53ms | 79ms | **33% faster** ✅ |
+| Cache Hit % | 99.8% | N/A | Optimal |
 
-### 3. Large-Scale Stress Test
-```bash
-python run_benchmark.py --generate-schema \
-    --num-tables 4 \
-    --features-per-table 10 \
-    --rows-per-table 1000000000 \
-    --output-dir test_1b
-```
-
-### 4. Multi-Backend Comparison
-```bash
-# Enable DynamoDB in config.py first
-python run_benchmark.py --backends lakebase dynamodb \
-    --compare --show-costs
-```
+**Key Advantage:** Predictable p99 (no hot partitions, no throttling)
 
 ---
 
-## 🎓 Key Concepts
+## ✅ Summary
 
-### Binpacking
-Fetching from all tables in a **single request** to minimize network overhead:
-- **Lakebase**: Stored procedure - 1 DB call
-- **DynamoDB**: `batch_get_item` - 1 API call
+**This framework provides:**
+- ✅ Production-scale bulk loading (billions of rows)
+- ✅ Optimized feature serving (37ms p50, 53ms p99)
+- ✅ Publication-ready benchmarks (vs DynamoDB)
+- ✅ Complete automation (DABs deployment)
+- ✅ Battle-tested reliability (checkpointing, idempotency)
 
-See [docs/BINPACKING_STRATEGY.md](docs/BINPACKING_STRATEGY.md)
+**Ready for production feature serving benchmarks!** 🚀
 
-### Cost Efficiency
-Performance per dollar metric:
-```
-Cost Efficiency = (Performance Score) / (Total Cost)
-```
-
-Higher is better. Enables cost-aware decisions.
-
-### UNLOGGED Tables
-PostgreSQL tables without write-ahead logging:
-- ✅ 2-3x faster bulk loads
-- ❌ Data lost if database crashes
-- ✅ Safe for reproducible benchmark data
-
-See [BULK_LOAD_GUIDE.md](BULK_LOAD_GUIDE.md)
-
----
-
-## ✅ Success Criteria
-
-For fraud detection with 120ms SLA:
-
-1. ✅ **P99 < 120ms** - Meets SLA
-2. ✅ **P99 < 79ms** - Beats DynamoDB baseline
-3. ✅ **CV < 0.3** - Acceptable consistency
-4. ✅ **100% success rate** - No errors
-5. ✅ **Cost-effective** - Good performance per dollar
-
----
-
-## 🚦 Current Status
-
-**Production-Ready Features:**
-- ✅ Multi-backend framework (Lakebase + 3 backends ready)
-- ✅ Cost tracking for all backends
-- ✅ Bulk loading (10-100x faster than JDBC)
-- ✅ UNLOGGED tables (2-3x additional speedup)
-- ✅ Flexible schema generation
-- ✅ Comprehensive CLI tool
-- ✅ Terraform deployment
-- ✅ Complete documentation (7 major guides)
-
-**Next Steps:**
-- ⏳ Test DynamoDB backend with real AWS account
-- ⏳ Implement Aurora backend
-- ⏳ Implement Cosmos DB backend
-- ⏳ Real-time pricing API integration
-- ⏳ TCO calculator
-- ⏳ Result visualization
+**See documentation for detailed guides on deployment, optimization, and benchmarking.**
 
 ---
 
 ## 🤝 Contributing
 
-This is an internal Databricks project. For questions or contributions:
-
-1. Read the documentation (especially [FRAMEWORK_DESIGN.md](FRAMEWORK_DESIGN.md))
-2. Check [docs/LESSONS_LEARNED.md](docs/LESSONS_LEARNED.md)
-3. Follow the architecture in [BACKEND_DESIGN.md](BACKEND_DESIGN.md)
-4. Test with small datasets first
+This is a private framework for Lakebase benchmarking. For questions or issues, contact the team.
 
 ---
 
 ## 📄 License
 
-Internal use only - Databricks
-
----
-
-## 🎉 Get Started
-
-```bash
-# 1. Install
-pip install -r requirements.txt
-
-# 2. Configure
-cp config.template.py config.py
-# Edit config.py
-
-# 3. Generate schema
-python run_benchmark.py --generate-schema \
-    --num-tables 30 \
-    --features-per-table 5
-
-# 4. See all options
-python run_benchmark.py --help
-```
-
-**For detailed instructions, see [CLI_GUIDE.md](CLI_GUIDE.md)**
-
----
-
-## 🙋 Getting Help
-
-- **Quick Reference**: [docs/QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)
-- **CLI Guide**: [CLI_GUIDE.md](CLI_GUIDE.md)
-- **Setup Issues**: [docs/SETUP.md](docs/SETUP.md)
-- **Performance**: [docs/OPTIMIZATION_IDEAS.md](docs/OPTIMIZATION_IDEAS.md)
-
-**Command to get started:**
-```bash
-python run_benchmark.py --list-backends
-```
-
-Happy benchmarking! 🚀
+Proprietary - Internal use only

@@ -1,0 +1,106 @@
+bundle:
+  name: lakebase-benchmarking
+include:
+- resources/*.yml
+sync:
+  include:
+  - generated/*
+  - utils/*
+  - core/*
+  - backends/*
+  - config.py
+targets:
+  dev:
+    mode: development
+    workspace:
+      host: https://fe-sandbox-one-env-som-workspace.cloud.databricks.com/
+      profile: fraud-benchmark
+    variables:
+      catalog: benchmark
+      schema: data_load
+      volume: benchmark_data_dev
+      lakebase_host: ep-autumn-fire-d318blbk.database.eu-west-1.cloud.databricks.com
+      lakebase_database: benchmark
+      lakebase_schema: features
+      cluster_node_type: i3.xlarge
+      cluster_num_workers: 8  # 8 workers, no autoscale (32 CU Lakebase)
+  staging:
+    mode: production
+    workspace:
+      host: https://your-workspace.cloud.databricks.com
+    variables:
+      catalog: benchmark
+      schema: data_load
+      volume: benchmark_data_staging
+      lakebase_host: ep-autumn-fire-d318blbk.database.eu-west-1.cloud.databricks.com
+      lakebase_database: benchmark_test
+      lakebase_schema: features_test
+      cluster_node_type: i3.xlarge
+      cluster_num_workers: 4
+  prod:
+    mode: production
+    workspace:
+      host: https://your-workspace.cloud.databricks.com
+    variables:
+      catalog: benchmark
+      schema: data_load
+      volume: benchmark_data_prod
+      lakebase_host: ep-autumn-fire-d318blbk.database.eu-west-1.cloud.databricks.com
+      lakebase_database: benchmark
+      lakebase_schema: features
+      cluster_node_type: m6i.4xlarge
+      cluster_num_workers: 8
+variables:
+  catalog:
+    description: Unity Catalog catalog name
+    default: benchmark
+  schema:
+    description: Unity Catalog schema name
+    default: data_load
+  volume:
+    description: Unity Catalog volume name
+    default: benchmark_data
+  lakebase_host:
+    description: Lakebase host
+    default: ep-autumn-fire-d318blbk.database.eu-west-1.cloud.databricks.com
+  lakebase_database:
+    description: Lakebase database name
+    default: benchmark
+  lakebase_schema:
+    description: Lakebase schema name
+    default: features
+  cluster_node_type:
+    description: Databricks node type
+    default: m6i.2xlarge
+  cluster_num_workers:
+    description: Number of cluster workers (auto-updated by lakebench deploy)
+    default: 4
+  lakebase_user:
+    description: Lakebase database user
+    default: fraud_benchmark_user
+  lakebase_password:
+    description: Lakebase database password (use secrets in production!)
+    default: fraud_benchmark_user_123!
+  delta_catalog:
+    description: Delta catalog for staging synthetic data (synced tables)
+    default: benchmark
+  delta_schema:
+    description: Delta schema for staging synthetic data (synced tables)
+    default: staging
+  lakebase_catalog:
+    description: Foreign catalog registered to Lakebase (e.g., benchmark_test_lakebase)
+    default: "benchmark_test_lakebase"
+  lakebase_project:
+    description: Lakebase Autoscaling project name (leave empty if using Provisioned)
+    default: "CKO-benchmark"
+  lakebase_branch:
+    description: Lakebase Autoscaling branch name
+    default: "main"
+workspace:
+  root_path: /Workspace/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+  file_path: /Workspace/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}/files
+  artifact_path: /Workspace/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}/artifacts
+  state_path: /Workspace/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}/state
+permissions:
+- level: CAN_MANAGE
+  user_name: ${workspace.current_user.userName}

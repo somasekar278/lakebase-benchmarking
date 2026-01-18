@@ -1,0 +1,30 @@
+# =============================================================================
+# Git Attributes - Prevent Credential Files from Being Committed
+# =============================================================================
+# This file ensures that sensitive files are never accidentally committed,
+# even if they're not in .gitignore
+
+# Configuration files with credentials
+config.py filter=secret
+config.local.py filter=secret
+terraform.tfvars filter=secret
+*.tfvars filter=secret
+
+# Environment files
+.env filter=secret
+.env.* filter=secret
+
+# AWS credentials
+credentials filter=secret
+*.pem filter=secret
+*.key filter=secret
+
+# Secrets
+secrets.json filter=secret
+secrets.yaml filter=secret
+secrets.yml filter=secret
+*_credentials.* filter=secret
+*_secrets.* filter=secret
+
+# Note: The 'secret' filter is defined in .git/config
+# It prevents these files from being staged/committed
