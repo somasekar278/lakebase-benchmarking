@@ -5,21 +5,22 @@ include:
 sync:
   include:
   - generated/*
+  - notebooks/*
   - utils/*
   - core/*
   - backends/*
   - config.py
+  - setup.py
 targets:
   dev:
     mode: development
     workspace:
-      host: https://fe-sandbox-one-env-som-workspace.cloud.databricks.com/
-      profile: fraud-benchmark
+      host: https://fe-sandbox-one-env-som-workspace-v4.cloud.databricks.com/
     variables:
       catalog: benchmark
       schema: data_load
       volume: benchmark_data_dev
-      lakebase_host: ep-autumn-fire-d318blbk.database.eu-west-1.cloud.databricks.com
+      lakebase_host: ep-gentle-silence-d346r2cf.database.eu-west-1.cloud.databricks.com
       lakebase_database: benchmark
       lakebase_schema: features
       cluster_node_type: i3.xlarge
@@ -80,7 +81,7 @@ variables:
     default: fraud_benchmark_user
   lakebase_password:
     description: Lakebase database password (use secrets in production!)
-    default: fraud_benchmark_user_123!
+    default: fraud-benchmark-user123!
   delta_catalog:
     description: Delta catalog for staging synthetic data (synced tables)
     default: benchmark

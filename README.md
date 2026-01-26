@@ -1,347 +1,253 @@
-# 🚀 Lakebase Feature Serving Benchmark Framework
+# Lakebase Benchmarking Project
 
-**Production-ready benchmarking framework for Lakebase feature serving with optimized bulk loading.**
+Production-grade benchmarking suite for Lakebase feature serving performance.
 
-[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Databricks](https://img.shields.io/badge/databricks-runtime-orange.svg)](https://databricks.com/)
+## 🎯 What This Project Does
 
----
+Benchmarks Lakebase (PostgreSQL-based feature store) against DynamoDB for real-time feature serving workloads, focusing on hot/cold key access patterns and multi-entity requests.
 
-## 🎯 What is This?
+## 📊 Current Benchmark: Zipfian V3 (Production-Ready)
 
-**Comprehensive framework for:**
-1. **Bulk loading** billions of rows into Lakebase (4-10x faster than JDBC)
-2. **Benchmarking** feature serving performance vs DynamoDB
-3. **Production optimization** with cache warming and connection pooling
-4. **Publication-ready reports** with component-level analysis
-
-**Target Use Case:** Feature store benchmarking (30 tables, 16B+ rows, 30-40ms p99 latency)
-
----
+**Production-grade multi-entity feature serving benchmark with:**
+- ✅ Random key sampling from ALL tables (not just first keys)
+- ✅ SELECT * (fetches actual data, not just index)
+- ✅ Serial execution (realistic per-query latency)
+- ✅ EXPLAIN sampling for precise I/O measurement
+- ✅ Error handling with graceful degradation
+- ✅ NaN-safe correlation calculation
+- ✅ TABLESAMPLE fallback for small tables
+- ✅ Key persistence for reproducibility
 
 ## 🚀 Quick Start
 
-### **For Bulk Loading (Production Scale):**
-
+### 1. Upload V3 Benchmark
 ```bash
-# 1. Configure credentials
-# Edit config.py with your Lakebase connection details
-
-# 2. Deploy to Databricks
-databricks bundle deploy -t dev
-
-# 3. Run bulk load for 30 fraud tables (16.6B rows)
-databricks bundle run fraud_load_all_tables -t dev
-
-# 4. Build indexes (optimized, ~3-4 hours for 11 tables)
-#    With automatic tuning: 3x faster than default PostgreSQL settings!
-databricks bundle run fraud_build_indexes -t dev
-
-# Done! ✅ Ready for benchmarking
+python3 upload_zipfian_v3.py
 ```
 
-**Load Performance:**
-- 2B rows in ~20-30 minutes
-- 8 concurrent workers
-- Stage-Index-Swap pattern (no downtime)
-- Automatic checkpointing (resume on failure)
-
-### **For Feature Serving Benchmarks:**
-
+### 2. Update Job to V3
 ```bash
-# 🚀 AUTOMATED: Single command runs entire workflow
-databricks bundle run fraud_benchmark_end_to_end -t dev
-
-# Runs automatically:
-# 1. Verify tables (10 min)
-# 2. Quick baseline (30 min)  
-# 3. Production benchmark (2 hours)
-# 4. Generate report (1 hour)
-# Total: ~3.5 hours fully automated
-
-# Done! ✅ Complete results + publication-ready charts
+python3 update_job_to_v3.py
 ```
 
-**Or run individual steps:**
+### 3. Run Benchmark
 ```bash
-databricks bundle run fraud_verify_tables -t dev
-databricks bundle run fraud_benchmark_feature_serving -t dev
-databricks bundle run fraud_production_benchmark -t dev
+python3 run_zipfian_v3_job.py
 ```
 
-**Expected Performance:**
-- P50: 37ms (vs DynamoDB 30ms, +23%)
-- P99: 53ms (vs DynamoDB 79ms, **-33%** ✅)
-- Cache hit ratio: 99.8%
-- 30 tables, single round-trip
+**Expected runtime**: 12-18 minutes
 
-### **For Database Migration (Workspace → Workspace):**
+**Monitor**: Check Databricks UI for progress
 
-```bash
-# 1. Dump current database to UC Volume (30-60 min)
-databricks bundle run fraud_dump_database -t dev
-
-# 2. In new workspace, configure connection to new Lakebase endpoint
-# Edit config.py with new endpoint details
-
-# 3. Restore from UC Volume (1-2 hours)
-databricks bundle run fraud_restore_database -t dev
-
-# Done! ✅ All 30 tables + indexes migrated (2-3 hours vs 30+ hours re-load)
-```
-
-**Migration Benefits:**
-- ✅ Preserves all data, indexes, constraints
-- ✅ ~10x faster than re-loading (2-3 hours vs 30+ hours)
-- ✅ Compressed backup (~500-800 GB vs 3TB uncompressed)
-- ✅ Parallel restore for faster recovery
-
-See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for detailed instructions.
-
----
-
-## 📊 Architecture
-
-### **Bulk Loading (Stage-Index-Swap Pattern)**
-
-```
-Phase 1: Pure COPY (No Indexes)
-  Table 1: Generate CSV → COPY (8 workers parallel)
-  Table 2: Generate CSV → COPY
-  ... (all 30 tables)
-
-Phase 2: Parallel Index Builds
-  Table 1: CREATE INDEX CONCURRENTLY
-  Table 2: CREATE INDEX CONCURRENTLY
-  ... (8 parallel builds)
-```
-
-**Key Features:**
-- ✅ Checkpointing (skip completed tables)
-- ✅ No duplicate loads (idempotent)
-- ✅ Stage tables always dropped
-- ✅ Production tables never dropped
-- ✅ Handles 1B+ row tables efficiently
-
-### **Feature Serving (Optimized Pattern)**
-
-```python
-from utils.feature_server import LakebaseFeatureServer
-
-# Initialize with automatic optimizations
-server = LakebaseFeatureServer(
-    lakebase_config=config,
-    table_schemas=schemas,
-    pool_size=10,          # Fixed pool
-    enable_warmup=True     # Auto cache warming
-)
-
-# Single round-trip for 30 tables
-features = server.get_features(hashkey, table_names)
-```
-
-**Optimizations:**
-- ✅ psycopg3 explicit pipelining (single network flush)
-- ✅ Separated execute/fetch (minimizes round-trips)
-- ✅ Connection-local prepared statements
-- ✅ Fixed-size connection pool (no cache eviction)
-- ✅ Automatic cache warming (prevents cold starts)
-
----
-
-## 📊 Key Features
-
-### **Bulk Loading:**
-✅ **Stage-Index-Swap pattern** - No downtime, optimal performance  
-✅ **Parallel COPY** - 8 concurrent workers, handles 1B+ rows  
-✅ **Checkpointing** - Resume on failure, never reload completed tables  
-✅ **Idempotent** - Safe to re-run, automatic skip logic  
-
-### **Feature Serving:**
-✅ **Optimized query pattern** - Single network flush for 30 tables  
-✅ **37ms p50, 53ms p99** - Beats DynamoDB on tail latency  
-✅ **Cache warming** - Prevents 600ms+ cold-start penalty  
-✅ **Production-ready** - Connection pooling, error handling, monitoring
-
-### **Benchmarking:**
-✅ **Component-level analysis** - Network, query, transfer breakdown  
-✅ **Publication-ready reports** - 13+ visualizations, executive summaries  
-✅ **Cache metrics** - Hit ratios, buffer stats, index usage  
-✅ **vs DynamoDB** - Direct comparison with baseline
-
----
-
-## 📂 Project Structure
+## 📁 Project Structure
 
 ```
 lakebase-benchmarking/
+├── README.md                                    # This file
+├── databricks.yml                               # Databricks Asset Bundle config
+├── requirements.txt                             # Python dependencies
+├── credentials.template                         # Template for credentials
 │
-├── README.md                         # This file
-├── requirements.txt                  # Dependencies
-├── config.py                         # Configuration (gitignored)
-├── databricks.yml                    # DABs deployment config
+├── notebooks/                                   # Databricks notebooks
+│   ├── benchmark_zipfian_realistic_v3.py       # ⭐ PRODUCTION: V3 benchmark
+│   ├── zipfian_benchmark_visuals.py            # ⭐ PRODUCTION: Visualizations
+│   ├── generate_csvs.py                        # CSV generation
+│   ├── run_pipelined_load_inline.py            # Data loading
+│   ├── verify_loaded_tables.py                 # Verification
+│   └── verify_pk_exists.py                     # Primary key verification
 │
-├── notebooks/                        # Databricks notebooks
-│   ├── load_schema_from_ddl.py       # Bulk loading
-│   ├── build_missing_indexes.py      # Index builder
-│   ├── verify_all_tables.py          # Pre-deployment check
-│   ├── generate_benchmark_report.py  # Full benchmark report
-│   └── benchmarks/
-│       └── benchmark_generic.py      # Feature serving benchmark
+├── resources/                                   # Databricks resources
+│   └── jobs.yml                                # ⭐ Job definitions
 │
-├── utils/                            # Core utilities
-│   ├── feature_server.py             # ⭐ Optimized feature serving
-│   ├── instrumented_feature_server.py# Component-level timing
-│   ├── schema_loader.py              # Schema + data generation
-│   ├── cache_warming.py              # Cache warming automation
-│   ├── lakebase_connection.py        # Connection management
-│   └── metrics.py                    # Performance metrics
+├── utils/                                       # Utility modules
+│   ├── __init__.py
+│   ├── feature_server.py
+│   ├── pipelined_load.py
+│   └── csv_timestamp_validator.py
 │
-├── backends/                         # Database backends
-│   └── lakebase.py                   # Lakebase implementation
+├── generated/                                   # Generated SQL/config
+│   ├── fraud_feature_tables_30_COMPLETE.sql
+│   └── fraud_tables_row_counts_30_COMPLETE.txt
 │
-├── core/                             # Core abstractions
-│   ├── backend.py                    # Backend interface
-│   └── workload.py                   # Workload definitions
+├── upload_zipfian_v3.py                        # ⭐ Upload V3 notebook
+├── update_job_to_v3.py                         # ⭐ Update job to V3
+├── run_zipfian_v3_job.py                       # ⭐ Run V3 benchmark
 │
-├── resources/                        # DABs resources
-│   ├── jobs.yml                      # Job definitions
-│   └── volumes.yml                   # UC volume config
+├── grant_stats_permission.sql                  # Grant pg_stat_reset permission
+├── SETUP_NEW_WORKSPACE.sql                     # Initial workspace setup
 │
-└── Documentation/
-    ├── BENCHMARKING.md               # ⭐ Benchmark guide
-    ├── PRODUCTION_GUIDE.md           # ⭐ Production deployment
-    ├── OPTIMIZATION_DETAILS.md       # Technical deep-dive
-    └── RCA_POSTGRESQL_63_CHAR_LIMIT.md  # Lessons learned
+├── RUN_ZIPFIAN_BENCHMARK.md                    # How to run the benchmark
+├── ZIPFIAN_V3_KEY_PERSISTENCE.md               # V3 documentation
+├── COST_METHODOLOGY.md                         # Cost analysis methodology
+└── CUSTOMER_DISCOVERY_QUESTIONS.md             # Customer discovery guide
 ```
 
----
+## 🔑 Key Files
 
-## 📚 Documentation
+### Production Notebooks
+- **`benchmark_zipfian_realistic_v3.py`**: Production-grade benchmark with all fixes
+- **`zipfian_benchmark_visuals.py`**: 7 professional visualizations
 
-| Document | Purpose |
-|----------|---------|
-| **[BENCHMARKING.md](BENCHMARKING.md)** | 📊 Benchmarking guide with report generation |
-| **[PRODUCTION_GUIDE.md](PRODUCTION_GUIDE.md)** | 🚀 Production deployment & cache warming |
-| **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** | 🔄 Database migration (pg_dump/restore) |
-| **[INDEX_OPTIMIZATION.md](INDEX_OPTIMIZATION.md)** | ⚡ 3x faster hybrid scheduling + memory-fraction |
-| **[INDEX_BUILD_BASELINE_RESULTS.md](INDEX_BUILD_BASELINE_RESULTS.md)** | 📊 Actual production build times (baseline for A/B test) |
-| **[OPTIMIZATION_DETAILS.md](OPTIMIZATION_DETAILS.md)** | 🔧 Technical deep-dive on query optimizations |
-| **[RCA_POSTGRESQL_63_CHAR_LIMIT.md](RCA_POSTGRESQL_63_CHAR_LIMIT.md)** | 📖 Lessons learned from 63-char bug |
+### Deployment Scripts
+- **`upload_zipfian_v3.py`**: Upload V3 notebook to Databricks
+- **`update_job_to_v3.py`**: Update existing job to use V3
+- **`run_zipfian_v3_job.py`**: Trigger benchmark job run
 
----
+### Configuration
+- **`databricks.yml`**: Bundle configuration (targets: dev, staging, prod)
+- **`resources/jobs.yml`**: Job definitions for Databricks
 
-## 🔧 Available DABs Jobs
+### Documentation
+- **`RUN_ZIPFIAN_BENCHMARK.md`**: Step-by-step guide
+- **`ZIPFIAN_V3_KEY_PERSISTENCE.md`**: V3 features and improvements
+- **`COST_METHODOLOGY.md`**: How we calculate cost comparisons
 
+## 📊 What Gets Measured
+
+### Latency Metrics
+- P50, P95, P99 latency across 9 hot/cold ratios (100% → 0%)
+- Per-entity latency breakdown
+- Request-level cache correlation
+
+### Cache Metrics
+- Average cache score (0 = all cold, 1 = all hot)
+- Fully hot request %
+- Fully cold request %
+- Latency-cache correlation
+
+### I/O Metrics
+- Disk blocks per request (via EXPLAIN sampling)
+- Heap reads vs hits
+- Per-query I/O distribution
+
+### Cost Analysis
+- Lakebase TCO (~$100/day)
+- DynamoDB equivalent (~$75,000/day)
+- Break-even analysis
+
+## 🎯 Benchmark Methodology
+
+### Request Structure
+- **3 entities per request**: card_fingerprint, customer_email, cardholder_name
+- **30 tables total**: 9-12 tables per entity (30d/90d/365d aggregations)
+- **Independent hot/cold**: Each entity independently decides hot or cold
+
+### Key Sampling
+- Sample 10,000 keys per entity from ALL tables
+- Shuffle keys randomly before hot/cold split
+- Top 1% = "hot" keys (100 per entity)
+- Remaining 99% = "cold" keys (9,900 per entity)
+- Persist keys for reproducibility
+
+### Execution
+- Serial execution (realistic per-query latency)
+- SELECT * (fetches actual data, not just index)
+- EXPLAIN sampling: 1 in 100 queries for precise I/O
+
+### Hot/Cold Matrix
+- 9 ratios: 100%, 90%, 80%, 70%, 60%, 50%, 30%, 10%, 0% hot traffic
+- 1,000 iterations per ratio
+- Total: 9,000 multi-entity requests per run
+
+## 📈 Visualizations (Auto-Generated)
+
+1. **P99 Latency vs Hot Traffic %**: Core story
+2. **Break-Even Skew**: Where Lakebase wins/loses vs DynamoDB
+3. **Cache Locality → Latency**: Physics of cache hits
+4. **Entity Contribution Heatmap**: Which entity dominates P99
+5. **Request Distribution**: Fully hot vs fully cold
+6. **IO Amplification Curve**: Disk blocks vs skew
+7. **Worst Case Analysis**: Fully-cold fanout distribution
+
+## 🔧 Setup
+
+### Prerequisites
+- Databricks workspace with cluster
+- Lakebase instance (PostgreSQL-compatible)
+- Python 3.8+
+- Databricks CLI (optional, for Bundle deployment)
+
+### Install Dependencies
 ```bash
-# Bulk Loading
-databricks bundle run fraud_load_single_table -t dev   # Test single table
-databricks bundle run fraud_load_all_tables -t dev     # Load all 30 tables
-databricks bundle run fraud_build_indexes -t dev       # Build indexes (3-4 hours)
-
-# Verification
-databricks bundle run fraud_verify_tables -t dev       # Check all tables ready
-
-# Benchmarking (Automated)
-databricks bundle run fraud_benchmark_end_to_end -t dev  # 🚀 FULL WORKFLOW (3.5h)
-
-# Benchmarking (Individual Steps)
-databricks bundle run fraud_benchmark_feature_serving -t dev       # Quick baseline (10 min)
-databricks bundle run fraud_production_benchmark -t dev            # Concurrent tests (2h)
-databricks bundle run fraud_generate_benchmark_report -t dev       # Report with charts (1h)
-
-# Migration
-databricks bundle run fraud_dump_database -t dev       # Backup for migration (1h)
-databricks bundle run fraud_restore_database -t dev    # Restore from backup (2h)
+pip install -r requirements.txt
 ```
 
-**For custom schemas**, use `notebooks/load_schema_from_ddl.py` directly in Databricks.
+### Configure Credentials
+1. Copy `credentials.template` to `.credentials`
+2. Fill in Lakebase connection details
+3. Add Databricks token
+
+### Grant PostgreSQL Permissions
+```sql
+-- Run as superuser
+GRANT EXECUTE ON FUNCTION pg_stat_reset() TO fraud_benchmark_user;
+```
+
+## 📊 Results
+
+Results are stored in:
+- **Table**: `features.zipfian_feature_serving_results`
+- **Keys**: `features.zipfian_keys_per_run`
+
+Query results:
+```sql
+SELECT * FROM features.zipfian_feature_serving_results
+WHERE run_id = (SELECT run_id FROM features.zipfian_feature_serving_results ORDER BY run_ts DESC LIMIT 1)
+ORDER BY hot_traffic_pct DESC;
+```
+
+## 🎯 Key Insights (80% Hot Traffic)
+
+**Realistic Production Scenario:**
+- P99 latency: ~45-80ms (competitive with DynamoDB's 79ms)
+- Fully hot requests: ~51% (0.8³)
+- Fully cold requests: ~0.8% (0.2³)
+- Mixed requests: ~48%
+
+**Cost:**
+- Lakebase: ~$100/day
+- DynamoDB: ~$75,000/day (50 tables × $1,500/day)
+- **Savings: $27M/year (750x cheaper)**
+
+## 📝 Documentation
+
+- **`RUN_ZIPFIAN_BENCHMARK.md`**: How to run the benchmark
+- **`ZIPFIAN_V3_KEY_PERSISTENCE.md`**: V3 improvements and methodology
+- **`COST_METHODOLOGY.md`**: Cost calculation methodology
+- **`CUSTOMER_DISCOVERY_QUESTIONS.md`**: Customer discovery guide
+
+## 🚨 Troubleshooting
+
+### Job fails with "schema benchmark does not exist"
+- Schema should be `features`, not `benchmark`
+- Update job parameters: `lakebase_schema: features`
+
+### "Could not reset stats (requires superuser)"
+- Non-fatal warning
+- Grant permission: `GRANT EXECUTE ON FUNCTION pg_stat_reset() TO user;`
+- Or ignore (uses aggregate I/O stats instead)
+
+### "Unable to access the notebook"
+- Upload notebook first: `python3 upload_zipfian_v3.py`
+- Check notebook path in job config
+
+### TLS/SSL certificate errors
+- Mac keychain issue
+- Run scripts with `required_permissions: ["all"]`
+- Or update Databricks CLI config
+
+## 🏆 Version History
+
+- **V3** (Current): Production-grade with all fixes
+- **V2** (Deprecated): Had biased key sampling and SELECT 1 issues
+- **V1** (Deprecated): Initial implementation
+
+## 📧 Contact
+
+For questions or issues, check the documentation or logs in Databricks UI.
 
 ---
 
-## 🏥 Troubleshooting
-
-### **Issue: High p99 Latency**
-1. Check cache hit ratio (`fraud_verify_tables` output)
-2. Check for autovacuum: `SELECT * FROM pg_stat_activity WHERE query LIKE '%autovacuum%'`
-3. Check for sequential scans: `SELECT * FROM pg_stat_user_tables WHERE seq_scan > 0`
-4. Re-run cache warmup if needed
-
-### **Issue: Bulk Load Failure**
-1. Check Databricks job logs for specific error
-2. Verify Lakebase connectivity
-3. Check disk space in UC volume
-4. Resume with checkpointing (job will skip completed tables)
-
-### **Issue: Index Build Takes Too Long**
-- Expected: ~3-4 hours for 11 tables (sequential, batch_size=1) with optimization
-- **NEW:** Automatic dynamic tuning (3x faster than default settings!)
-  - `maintenance_work_mem`: 12GB (vs default 64MB)
-  - `max_parallel_maintenance_workers`: 4 (vs default 2)
-- Check Lakebase CU allocation (32 CU / 64 GB RAM recommended)
-- Monitor with: `SELECT * FROM pg_stat_progress_create_index`
-- See [INDEX_OPTIMIZATION.md](INDEX_OPTIMIZATION.md) for details
-
----
-
-## 🔒 Security
-
-**Credential Protection:**
-- `config.py` is gitignored (contains credentials)
-- `.gitignore` blocks all sensitive files
-- `.gitattributes` provides additional safeguards
-- Pre-commit hook scans for secrets
-
-**Never commit:**
-- `config.py`
-- `.env` files
-- Any files with passwords/secrets
-
----
-
-## 📊 Performance Summary
-
-### **Bulk Loading (Production Scale):**
-| Table Size | Load Time | Throughput |
-|------------|-----------|------------|
-| 75M rows | 5 min | 250K rows/s |
-| 1B rows | 20-30 min | 550K rows/s |
-| 2B rows | 40-50 min | 660K rows/s |
-
-**Includes:** Data generation + COPY + Index build
-
-### **Feature Serving (30 Tables):**
-| Metric | Lakebase | DynamoDB | Verdict |
-|--------|----------|----------|---------|
-| P50 | 37ms | 30ms | Comparable |
-| P99 | 53ms | 79ms | **33% faster** ✅ |
-| Cache Hit % | 99.8% | N/A | Optimal |
-
-**Key Advantage:** Predictable p99 (no hot partitions, no throttling)
-
----
-
-## ✅ Summary
-
-**This framework provides:**
-- ✅ Production-scale bulk loading (billions of rows)
-- ✅ Optimized feature serving (37ms p50, 53ms p99)
-- ✅ Publication-ready benchmarks (vs DynamoDB)
-- ✅ Complete automation (DABs deployment)
-- ✅ Battle-tested reliability (checkpointing, idempotency)
-
-**Ready for production feature serving benchmarks!** 🚀
-
-**See documentation for detailed guides on deployment, optimization, and benchmarking.**
-
----
-
-## 🤝 Contributing
-
-This is a private framework for Lakebase benchmarking. For questions or issues, contact the team.
-
----
-
-## 📄 License
-
-Proprietary - Internal use only
+**Status**: ✅ Production-Ready  
+**Last Updated**: January 23, 2026  
+**Current Run**: Monitor at Databricks UI

@@ -127,4 +127,14 @@ terraform.tfstate.backup
 benchmark_results/
 comparison*.json
 results*.json
+generated_reports/
+*.checkpoint*.json
+
+# Temporary scripts
+chart_style_*.py
+report_exporter.py
+test_v*.py
+run_v*.py
+trigger_*.py
+upload_*.py
 

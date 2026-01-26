@@ -3,83 +3,15 @@
 
 resources:
   jobs:
-    # ========================================
-    # BULK LOADING JOBS
-    # ========================================
-    
-    # SINGLE TABLE TEST: 75M rows
-    fraud_single_table_test:
-      name: "[${bundle.target}] Fraud Single Table Test (75M rows)"
-      description: "Test 1 table before running all 30"
-      
-      tasks:
-        - task_key: create_volume
-          description: Create Unity Catalog volume
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/setup/create_volume.py
-            base_parameters:
-              catalog: ${var.catalog}
-              schema: ${var.schema}
-              volume: ${var.volume}
-        
-        - task_key: load_single_table
-          description: Load 75M rows fraud table
-          existing_cluster_id: "0113-210627-3rz38etp"
-          depends_on:
-            - task_key: create_volume
-          
-          notebook_task:
-            notebook_path: ../notebooks/load_schema_from_ddl.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-              ddl_file_path: "${workspace.file_path}/generated/single_table_test.sql"
-              rows_per_table_file: "${workspace.file_path}/generated/single_table_rows.txt"
-              uc_volume_path: "/Volumes/${var.catalog}/${var.schema}/${var.volume}"
-          
-          timeout_seconds: 7200  # 2 hours
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: single-table-test
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
     # ALL 30 TABLES: 16.6B rows total
     fraud_all_tables:
-      name: "[${bundle.target}] Fraud All 30 Tables (16.6B rows)"
+      name: "[${bundle.target}] Full Load: All 30 Tables (16.6B rows)"
       description: "Load all 30 fraud feature tables with correct row counts"
       
       tasks:
-        - task_key: create_volume
-          description: Create Unity Catalog volume
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/setup/create_volume.py
-            base_parameters:
-              catalog: ${var.catalog}
-              schema: ${var.schema}
-              volume: ${var.volume}
-        
-        - task_key: load_all_tables
-          description: Load all 30 fraud tables sequentially
-          existing_cluster_id: "0113-210627-3rz38etp"
-          depends_on:
-            - task_key: create_volume
+        - task_key: generate_csvs
+          description: "Task 1: Generate CSVs for all 30 tables"
+          existing_cluster_id: "0120-120746-h595w64t"
           
           notebook_task:
             notebook_path: ../notebooks/load_schema_from_ddl.py
@@ -91,6 +23,26 @@ resources:
               lakebase_password: ${var.lakebase_password}
               ddl_file_path: "${workspace.file_path}/generated/fraud_feature_tables.sql"
               rows_per_table_file: "${workspace.file_path}/generated/fraud_tables_row_counts.txt"
+              uc_volume_path: "/Volumes/${var.catalog}/${var.schema}/${var.volume}"
+              csv_only: "true"
+          
+          timeout_seconds: 86400  # 24 hours
+          max_retries: 0
+        
+        - task_key: pipelined_load
+          description: "Task 2: Pipelined Load (COPY → INDEX → SWAP)"
+          depends_on:
+            - task_key: generate_csvs
+          existing_cluster_id: "0120-120746-h595w64t"
+          
+          notebook_task:
+            notebook_path: ../notebooks/run_pipelined_load.py
+            base_parameters:
+              lakebase_host: ${var.lakebase_host}
+              lakebase_database: ${var.lakebase_database}
+              lakebase_schema: ${var.lakebase_schema}
+              lakebase_user: ${var.lakebase_user}
+              lakebase_password: ${var.lakebase_password}
               uc_volume_path: "/Volumes/${var.catalog}/${var.schema}/${var.volume}"
           
           timeout_seconds: 86400  # 24 hours
@@ -109,448 +61,88 @@ resources:
         on_success:
           - ${workspace.current_user.userName}
     
-    # BUILD INDEXES: Create indexes for tables missing them (parallel)
-    fraud_build_indexes:
-      name: "[${bundle.target}] Build Missing Indexes (Sequential)"
-      description: "Build primary key indexes for all tables that need them (sequential builds to prevent temp disk exhaustion)"
+    # ZIPFIAN MULTI-ENTITY BENCHMARK WITH VISUALIZATIONS (V3 - Production Grade)
+    zipfian_benchmark_full:
+      name: "[${bundle.target}] Zipfian Multi-Entity Benchmark V3 + Visualizations"
+      description: "Run production-grade multi-entity Zipfian benchmark (100% → 0% hot traffic) with EXPLAIN sampling, error handling, and visualizations"
       
       tasks:
-        - task_key: build_indexes
-          description: Build indexes sequentially to prevent temp disk exhaustion
-          existing_cluster_id: "0113-210627-3rz38etp"
+        - task_key: run_zipfian_benchmark
+          description: "Task 1: Run Multi-Entity Zipfian Benchmark V3 (9 hot/cold ratios)"
+          existing_cluster_id: "0120-120746-h595w64t"
           
           notebook_task:
-            notebook_path: ../notebooks/build_missing_indexes.py
+            notebook_path: ../notebooks/benchmark_zipfian_realistic_v3.py
             base_parameters:
               lakebase_host: ${var.lakebase_host}
               lakebase_database: ${var.lakebase_database}
               lakebase_schema: ${var.lakebase_schema}
               lakebase_user: ${var.lakebase_user}
               lakebase_password: ${var.lakebase_password}
-              batch_size: "1"  # Sequential builds (safest - no temp disk contention)
+              iterations_per_run: "1000"
+              total_keys_per_entity: "10000"
+              hot_key_percent: "1"
+              explain_sample_rate: "999999"
+              run_all_modes: "true"
+              fetch_mode: "serial"
+              reuse_run_id: "8e5d19d6"
           
-          timeout_seconds: 86400  # 24 hours (matches fraud_load_all - sufficient for all index builds)
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: index-build
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # ========================================
-    # VERIFICATION JOBS
-    # ========================================
-    
-    # VERIFY: Check all tables loaded
-    fraud_verify_tables:
-      name: "[${bundle.target}] Verify All Tables"
-      description: "Verify all 30 tables loaded with correct row counts and indexes"
-      
-      tasks:
-        - task_key: verify_tables
-          description: Check all tables exist with correct data
-          existing_cluster_id: "0113-210627-3rz38etp"
+          libraries:
+            - pypi:
+                package: psycopg[binary,pool]
+            - pypi:
+                package: numpy
+            - pypi:
+                package: pandas
+            - pypi:
+                package: matplotlib
+            - pypi:
+                package: seaborn
           
-          notebook_task:
-            notebook_path: ../notebooks/verify_all_tables.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-          
-          timeout_seconds: 300  # 5 minutes
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: verification
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # ========================================
-    # BENCHMARKING JOBS
-    # ========================================
-    
-    # ========================================
-    # AUTOMATED END-TO-END BENCHMARK WORKFLOW
-    # ========================================
-    
-    # AUTOMATED: Verify → Benchmark → Report (Full Workflow)
-    fraud_benchmark_end_to_end:
-      name: "[${bundle.target}] End-to-End Benchmark Workflow (Automated)"
-      description: "🚀 AUTOMATED: Verify tables → Run production benchmark → Generate report (all-in-one)"
-      
-      tasks:
-        - task_key: verify_tables
-          description: "Step 1: Verify all 30 tables have PRIMARY KEYs"
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/verify_all_tables.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-          
-          timeout_seconds: 600  # 10 minutes
+          # No timeout - let it run as long as needed
           max_retries: 0
         
-        - task_key: quick_baseline_benchmark
-          description: "Step 2: Quick baseline benchmark (1000 iterations, single-threaded)"
-          existing_cluster_id: "0113-210627-3rz38etp"
+        - task_key: generate_visualizations
+          description: "Task 2: Generate 7 Professional Visualizations"
           depends_on:
-            - task_key: verify_tables
+            - task_key: run_zipfian_benchmark
+          existing_cluster_id: "0120-120746-h595w64t"
           
           notebook_task:
-            notebook_path: ../notebooks/benchmark_feature_serving.py
+            notebook_path: ../notebooks/zipfian_benchmark_visuals.py
             base_parameters:
               lakebase_host: ${var.lakebase_host}
               lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
               lakebase_user: ${var.lakebase_user}
               lakebase_password: ${var.lakebase_password}
-              num_warmup: "1000"
-              num_iterations: "1000"
-              num_tables: "30"
+              run_id: "latest"
           
-          timeout_seconds: 1800  # 30 minutes
-          max_retries: 0
-        
-        - task_key: production_benchmark
-          description: "Step 3: Production benchmark (concurrent clients + multi-table)"
-          existing_cluster_id: "0113-210627-3rz38etp"
-          depends_on:
-            - task_key: quick_baseline_benchmark
+          libraries:
+            - pypi:
+                package: psycopg[binary,pool]
+            - pypi:
+                package: numpy
+            - pypi:
+                package: pandas
+            - pypi:
+                package: matplotlib
+            - pypi:
+                package: seaborn
+            - pypi:
+                package: plotly
+            - pypi:
+                package: kaleido
           
-          notebook_task:
-            notebook_path: ../notebooks/generate_production_benchmark_report.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-              num_warmup: "1000"
-              num_iterations_per_client: "100"
-              concurrent_clients: "1,10,50,100"
-              table_counts: "10,20,30"
-              check_autovacuum: "true"
-          
-          timeout_seconds: 7200  # 2 hours
-          max_retries: 0
-        
-        - task_key: generate_report
-          description: "Step 4: Generate publication-ready report with visualizations"
-          existing_cluster_id: "0113-210627-3rz38etp"
-          depends_on:
-            - task_key: production_benchmark
-          
-          notebook_task:
-            notebook_path: ../notebooks/generate_benchmark_report.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-              num_warmup: "1000"
-              num_iterations: "1000"
-              report_format: "interactive"
-          
-          timeout_seconds: 3600  # 60 minutes
+          # No timeout - let it run as long as needed
           max_retries: 0
       
       max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: end-to-end-benchmark
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # BENCHMARK: Feature Serving (Single-threaded baseline)
-    fraud_benchmark_feature_serving:
-      name: "[${bundle.target}] Benchmark Feature Serving (Baseline)"
-      description: "Single-threaded latency baseline for multi-table feature retrieval. Target: p99 < 79ms"
-      
-      tasks:
-        - task_key: benchmark_feature_serving
-          description: Measure latency for 30-table feature retrieval
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/benchmark_feature_serving.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-              num_warmup: "1000"
-              num_iterations: "1000"
-              num_tables: "30"
-          
-          timeout_seconds: 1800  # 30 minutes
-          max_retries: 0
-      
-      max_concurrent_runs: 1
+      timeout_seconds: 0  # CRITICAL: No timeout - let benchmark run as long as needed
       
       tags:
         Environment: ${bundle.target}
         Project: fraud-benchmarking
         Type: benchmark
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # ZIPFIAN: Realistic hot/cold key distribution benchmark
-    fraud_benchmark_zipfian:
-      name: "[${bundle.target}] Zipfian Benchmark (Production Realistic)"
-      description: "🎯 REALISTIC: 80% hot keys / 20% cold keys - Models production Zipfian access patterns"
-      
-      tasks:
-        - task_key: benchmark_zipfian
-          description: Measure latency with realistic hot/cold key distribution
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/benchmark_zipfian_realistic.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-              num_total_keys: "10000"
-              hot_key_count: "1000"
-              hot_traffic_percent: "70.0"
-              num_warmup: "2000"
-              num_iterations: "1000"
-              num_tables: "30"
-          
-          timeout_seconds: 1800  # 30 minutes
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: benchmark-zipfian
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # BENCHMARK: Production Benchmark Report (NEW - with concurrency!)
-    fraud_production_benchmark:
-      name: "[${bundle.target}] Production Benchmark (Concurrent + Multi-table)"
-      description: "🔥 PRODUCTION-GRADE: Tests 1/10/50/100 concurrent clients × 10/20/30 tables with autovacuum protection"
-      
-      tasks:
-        - task_key: production_benchmark
-          description: Run full production benchmark matrix
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/generate_production_benchmark_report.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-              num_warmup: "1000"
-              num_iterations_per_client: "100"
-              concurrent_clients: "1,10,50,100"
-              table_counts: "10,20,30"
-              check_autovacuum: "true"
-          
-          timeout_seconds: 7200  # 2 hours (comprehensive testing)
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: production-benchmark
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # REPORT: Generate publication-ready benchmark report (original single-threaded)
-    fraud_generate_benchmark_report:
-      name: "[${bundle.target}] Generate Benchmark Report (Publication-Ready)"
-      description: "Generate comprehensive report with visualizations for stakeholder presentation"
-      
-      tasks:
-        - task_key: generate_report
-          description: Run benchmarks and generate publication-quality charts
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/generate_benchmark_report.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-              num_warmup: "1000"
-              num_iterations: "1000"
-              report_format: "interactive"
-          
-          timeout_seconds: 3600  # 60 minutes
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: reporting
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # ========================================
-    # MIGRATION JOBS (pg_dump/pg_restore)
-    # ========================================
-    
-    # DUMP: Backup Lakebase database to UC Volume
-    fraud_dump_database:
-      name: "[${bundle.target}] Dump Lakebase Database (Backup)"
-      description: "Create a pg_dump backup of all 30 tables + indexes to UC Volume for migration"
-      
-      tasks:
-        - task_key: dump_database
-          description: Run pg_dump to backup features schema
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/dump_lakebase_database.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-          
-          timeout_seconds: 7200  # 2 hours (30-60 min expected)
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: migration-dump
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # RESTORE: Restore Lakebase database from UC Volume
-    fraud_restore_database:
-      name: "[${bundle.target}] Restore Lakebase Database (From Backup)"
-      description: "Restore pg_dump backup to new Lakebase endpoint (parallel restore)"
-      
-      tasks:
-        - task_key: restore_database
-          description: Run pg_restore with parallel workers
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/restore_lakebase_database.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-          
-          timeout_seconds: 10800  # 3 hours (1-2 hours expected)
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: migration-restore
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # RESTORE TEST: Test restore with 5 tables (quick validation)
-    fraud_restore_database_test:
-      name: "[${bundle.target}] Test Restore (5 Tables to features_test schema)"
-      description: "Quick test of restore process with 5 largest tables (~7.5B rows) to validate before full migration"
-      
-      tasks:
-        - task_key: test_restore
-          description: Selectively restore 5 tables to test schema
-          existing_cluster_id: "0113-210627-3rz38etp"
-          
-          notebook_task:
-            notebook_path: ../notebooks/restore_lakebase_database_test.py
-            base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-          
-          timeout_seconds: 1800  # 30 minutes (10-15 min expected)
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: migration-test
       
       email_notifications:
         on_failure:

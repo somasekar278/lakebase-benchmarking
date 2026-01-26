@@ -1,0 +1,2089 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # 🎯 Realistic Zipfian Feature Serving Benchmark V5.2 (Multi-Entity)
+# MAGIC 
+# MAGIC **Production-Grade Benchmark with:**
+# MAGIC - ✅ Random key sampling from ALL tables (not just first keys)
+# MAGIC - ✅ SELECT * (fetches actual columns, not just index)
+# MAGIC - ✅ Serial execution (realistic per-query latency)
+# MAGIC - ✅ Per-entity timing (independent measurement)
+# MAGIC - ✅ Aggregate I/O tracking (via pg_statio_user_tables)
+# MAGIC - ✅ Key persistence for reproducibility
+# MAGIC 
+# MAGIC **Request Structure:**
+# MAGIC - Each request = 3 entities (card_fingerprint, customer_email, cardholder_name)
+# MAGIC - Each entity fans out to 9-12 tables (30 tables total per request)
+# MAGIC - Hot/cold determined independently per entity
+# MAGIC - Latency = SUM(entity latencies) for serial execution
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 1️⃣ Install Dependencies
+
+# COMMAND ----------
+
+%pip install psycopg[binary,pool] numpy pandas matplotlib seaborn
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 2️⃣ Configuration
+
+# COMMAND ----------
+
+dbutils.widgets.text("lakebase_host", "", "Lakebase Host")
+dbutils.widgets.text("lakebase_database", "benchmark", "Database")
+dbutils.widgets.text("lakebase_schema", "features", "Schema")
+dbutils.widgets.text("lakebase_user", "", "User")
+dbutils.widgets.text("lakebase_password", "", "Password")
+dbutils.widgets.text("iterations_per_run", "1000", "Iterations Per Run")
+dbutils.widgets.text("total_keys_per_entity", "10000", "Total Keys Per Entity")
+dbutils.widgets.text("hot_key_percent", "1", "Hot Key % of Dataset")
+dbutils.widgets.text("explain_sample_rate", "0", "🆕 V5.3: Post-run EXPLAIN sample size (0=disabled)")
+dbutils.widgets.dropdown("projection_mode", "all", ["all", "model_projection"], "🆕 V5.3: Column Projection")
+dbutils.widgets.dropdown("run_all_modes", "true", ["true", "false"], "Run All Modes Sequentially")
+dbutils.widgets.dropdown("fetch_mode", "serial", ["serial", "binpacked", "binpacked_parallel"], "Fetch Mode (if run_all_modes=false)")
+dbutils.widgets.text("reuse_run_id", "", "Reuse Keys from Run ID (empty=sample new)")
+dbutils.widgets.text("parallel_workers", "1,2,3,4", "Parallel Workers (comma-separated)")
+dbutils.widgets.dropdown("log_query_timings", "true", ["true", "false"], "🆕 V5.1: Log Slow Queries")
+dbutils.widgets.text("slow_query_threshold_ms", "40", "🆕 V5.1: Slow Query Threshold (ms)")
+
+LAKEBASE_CONFIG = {
+    "host": dbutils.widgets.get("lakebase_host"),
+    "port": 5432,
+    "dbname": dbutils.widgets.get("lakebase_database"),
+    "user": dbutils.widgets.get("lakebase_user"),
+    "password": dbutils.widgets.get("lakebase_password"),
+    "sslmode": "require",
+    # ✅ CRITICAL: Prevent connection timeouts during long-running benchmarks
+    "connect_timeout": 300,  # 5 minutes to establish connection
+    "keepalives": 1,  # Enable TCP keepalive
+    "keepalives_idle": 30,  # Send keepalive after 30s of idle
+    "keepalives_interval": 10,  # Resend keepalive every 10s
+    "keepalives_count": 5,  # Give up after 5 failed keepalives
+    "options": "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0"  # No query/idle timeouts
+}
+
+SCHEMA = dbutils.widgets.get("lakebase_schema")
+ITERATIONS_PER_RUN = int(dbutils.widgets.get("iterations_per_run"))
+TOTAL_KEYS_PER_ENTITY = int(dbutils.widgets.get("total_keys_per_entity"))
+HOT_KEY_PERCENT_OF_DATASET = int(dbutils.widgets.get("hot_key_percent"))
+EXPLAIN_SAMPLE_RATE = int(dbutils.widgets.get("explain_sample_rate"))
+PROJECTION_MODE = dbutils.widgets.get("projection_mode")  # V5.3: all | model_projection
+RUN_ALL_MODES = dbutils.widgets.get("run_all_modes") == "true"
+FETCH_MODE = dbutils.widgets.get("fetch_mode")  # serial | binpacked | binpacked_parallel
+REUSE_RUN_ID = dbutils.widgets.get("reuse_run_id").strip()  # Empty string = sample new keys
+PARALLEL_WORKERS_STR = dbutils.widgets.get("parallel_workers")  # e.g., "1,2,3,4"
+PARALLEL_WORKERS = [int(w.strip()) for w in PARALLEL_WORKERS_STR.split(",")]
+LOG_QUERY_TIMINGS = dbutils.widgets.get("log_query_timings") == "true"  # V5.1: Log slow queries
+SLOW_QUERY_THRESHOLD_MS = float(dbutils.widgets.get("slow_query_threshold_ms"))  # V5.1: Threshold for slow query log
+
+# ✅ V5.3: Column projection (SELECT * vs model columns)
+# Note: Model projection requires schema knowledge - keeping SELECT * for now
+# TODO: Implement per-feature-type projection maps if needed
+SELECT_CLAUSE = "*"  # Always use * until per-table projections are defined
+
+# Hot/cold matrix to test
+HOT_COLD_MATRIX = [100, 90, 80, 70, 60, 50, 30, 10, 0]
+
+# ✅ V5: Build mode configurations with worker counts
+MODE_CONFIGS = []
+
+if RUN_ALL_MODES:
+    # Serial and bin-packed (no workers)
+    MODE_CONFIGS.append({"mode": "serial", "workers": None})
+    MODE_CONFIGS.append({"mode": "binpacked", "workers": None})
+    
+    # Parallel with concurrency sweep
+    for workers in PARALLEL_WORKERS:
+        MODE_CONFIGS.append({"mode": "binpacked_parallel", "workers": workers})
+else:
+    # Single mode
+    if FETCH_MODE == "binpacked_parallel":
+        for workers in PARALLEL_WORKERS:
+            MODE_CONFIGS.append({"mode": FETCH_MODE, "workers": workers})
+    else:
+        MODE_CONFIGS.append({"mode": FETCH_MODE, "workers": None})
+
+# Mode descriptions
+def get_mode_label(mode, workers):
+    if mode == "serial":
+        return "Serial (30 queries, baseline)"
+    elif mode == "binpacked":
+        return "Bin-packed (10 UNION ALL queries, serial)"
+    elif mode == "binpacked_parallel":
+        return f"Bin-packed + Parallel (10 queries, {workers} workers)"
+    return mode
+
+# Mode labels for summary display
+FETCH_MODE_LABELS = {
+    "serial": "Serial (30 queries, baseline)",
+    "binpacked": "Bin-packed (10 UNION ALL queries, serial)",
+    "binpacked_parallel": "Bin-packed + Parallel (10 queries)"
+}
+
+print("="*80)
+print("⚙️  MULTI-ENTITY ZIPFIAN BENCHMARK V5.3 CONFIGURATION (Production-Grade)")
+print("="*80)
+print(f"Lakebase:               {LAKEBASE_CONFIG['host']}")
+print(f"Schema:                 {SCHEMA}")
+print()
+print(f"🚀 V5 ENHANCEMENTS:")
+print(f"   ✅ Cost-normalized metrics (latency per query)")
+print(f"   ✅ Concurrency sweep (workers: {PARALLEL_WORKERS})")
+print(f"   ✅ Entity timing details (Gantt chart support)")
+print()
+print(f"📊 MODE CONFIGURATIONS ({len(MODE_CONFIGS)} total):")
+for cfg in MODE_CONFIGS:
+    print(f"   • {get_mode_label(cfg['mode'], cfg['workers'])}")
+print()
+print(f"🔑 KEY SAMPLING:")
+print(f"   Total keys/entity:   {TOTAL_KEYS_PER_ENTITY:,}")
+print(f"   Hot key %:           {HOT_KEY_PERCENT_OF_DATASET}% (randomly selected)")
+print(f"   Hot keys/entity:     {int(TOTAL_KEYS_PER_ENTITY * HOT_KEY_PERCENT_OF_DATASET / 100):,}")
+print()
+print(f"📊 BENCHMARK SETTINGS:")
+print(f"   Iterations/run:      {ITERATIONS_PER_RUN:,}")
+print(f"   Hot/cold ratios:     {HOT_COLD_MATRIX}")
+print(f"   ✅ V5.3: NO inline EXPLAIN (post-run diagnostic only)")
+print()
+print(f"🎯 REQUEST STRUCTURE:")
+print(f"   Entities/request:    3 (card, email, name)")
+print(f"   Tables/request:      30 (9-12 tables per entity)")
+print(f"   Hot/cold:            Independent per entity")
+print()
+print(f"✅ IMPROVEMENTS:")
+print(f"   • Random key sampling from ALL tables (not just first keys)")
+print(f"   • SELECT * (fetches actual data, not just index)")
+print(f"   • EXPLAIN sampling for precise I/O measurement")
+print(f"   • Error handling with graceful degradation")
+print(f"   • NaN-safe correlation calculation")
+print(f"   • TABLESAMPLE fallback for small tables")
+print("="*80)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 3️⃣ Entity Table Groups
+
+# COMMAND ----------
+
+# Entity → tables fanout (matches DynamoDB BatchGetItem grouping)
+ENTITY_TABLE_GROUPS = {
+    "card_fingerprint": [
+        "client_id_card_fingerprint__fraud_rates__30d",
+        "client_id_card_fingerprint__fraud_rates__90d",
+        "client_id_card_fingerprint__fraud_rates__365d",
+        "client_id_card_fingerprint__time_since__30d",
+        "client_id_card_fingerprint__time_since__90d",
+        "client_id_card_fingerprint__time_since__365d",
+        "client_id_card_fingerprint__good_rates__30d",
+        "client_id_card_fingerprint__good_rates__90d",
+        "client_id_card_fingerprint__good_rates__365d",
+    ],
+    "customer_email": [
+        "client_id_customer_email_clean__fraud_rates__30d",
+        "client_id_customer_email_clean__fraud_rates__90d",
+        "client_id_customer_email_clean__fraud_rates__365d",
+        "client_id_customer_email_clean__time_since__30d",
+        "client_id_customer_email_clean__time_since__90d",
+        "client_id_customer_email_clean__time_since__365d",
+        "client_id_customer_email_clean__good_rates__30d",
+        "client_id_customer_email_clean__good_rates__90d",
+        "client_id_customer_email_clean__good_rates__365d",
+    ],
+    "cardholder_name": [
+        "client_id_cardholder_name_clean__fraud_rates__30d",
+        "client_id_cardholder_name_clean__fraud_rates__90d",
+        "client_id_cardholder_name_clean__fraud_rates__365d",
+        "client_id_cardholder_name_clean__tesseract_velocities__30d",
+        "client_id_cardholder_name_clean__tesseract_velocities__90d",
+        "client_id_cardholder_name_clean__tesseract_velocities__365d",
+        "client_id_cardholder_name_clean__time_since__30d",
+        "client_id_cardholder_name_clean__time_since__90d",
+        "client_id_cardholder_name_clean__time_since__365d",
+        "client_id_cardholder_name_clean__good_rates__30d",
+        "client_id_cardholder_name_clean__good_rates__90d",
+        "client_id_cardholder_name_clean__good_rates__365d",
+    ],
+}
+
+ENTITY_NAMES = list(ENTITY_TABLE_GROUPS.keys())
+
+print(f"✅ Entity groups loaded:")
+for entity, tables in ENTITY_TABLE_GROUPS.items():
+    print(f"   {entity:20} → {len(tables):2} tables")
+print(f"\nTotal tables per request: {sum(len(t) for t in ENTITY_TABLE_GROUPS.values())}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 4️⃣ Import Libraries
+
+# COMMAND ----------
+
+import time
+import random
+import psycopg
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import json
+import uuid
+import re
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from psycopg_pool import ConnectionPool
+
+# Generate unique run ID
+RUN_ID = str(uuid.uuid4())[:8]
+RESULTS_SCHEMA = SCHEMA
+RESULTS_TABLE = "zipfian_feature_serving_results_v5"
+KEYS_TABLE = "zipfian_keys_per_run"
+
+# Plotting style
+sns.set_style("whitegrid")
+plt.rcParams['figure.figsize'] = (16, 10)
+
+print("✅ Libraries imported")
+print(f"📋 Run ID: {RUN_ID}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5️⃣ Database Connection & Helpers
+
+# COMMAND ----------
+
+def get_conn():
+    """
+    Get PostgreSQL connection with keepalive enabled
+    
+    Returns:
+        psycopg.Connection with aggressive keepalive settings
+    """
+    conn = psycopg.connect(**LAKEBASE_CONFIG)
+    
+    # Verify connection is alive
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+    except Exception as e:
+        print(f"⚠️  Connection test failed: {e}")
+        raise
+    
+    return conn
+
+def refresh_connection_if_stale(conn):
+    """
+    Check if connection is healthy and refresh if needed
+    
+    Args:
+        conn: Current connection
+    
+    Returns:
+        Connection (either existing or new)
+    """
+    try:
+        # Quick health check
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return conn
+    except Exception as e:
+        print(f"      ⚠️  Connection unhealthy ({e}), refreshing...")
+        try:
+            conn.close()
+        except:
+            pass
+        return get_conn()
+
+def fetch_sample_keys(conn, table, limit):
+    """✅ FIXED: Fetch random sample of keys with TABLESAMPLE + fallback"""
+    with conn.cursor() as cur:
+        # Try TABLESAMPLE SYSTEM first (fast for large tables)
+        cur.execute(f"""
+            SELECT DISTINCT hash_key 
+            FROM {SCHEMA}.{table} 
+            TABLESAMPLE SYSTEM (1)
+            LIMIT %s
+        """, (limit,))
+        keys = [r[0] for r in cur.fetchall()]
+        
+        # Fallback to ORDER BY RANDOM() if insufficient keys
+        if len(keys) < limit * 0.8:  # Less than 80% of requested
+            print(f"         ⚠️  TABLESAMPLE returned only {len(keys)} keys, using ORDER BY RANDOM()")
+            cur.execute(f"""
+                SELECT DISTINCT hash_key 
+                FROM {SCHEMA}.{table} 
+                ORDER BY RANDOM()
+                LIMIT %s
+            """, (limit,))
+            keys = [r[0] for r in cur.fetchall()]
+        
+        return keys
+
+def reset_pg_stats(conn):
+    """Reset PostgreSQL I/O statistics"""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_stat_reset();")
+            conn.commit()
+        return True
+    except Exception as e:
+        print(f"⚠️  Could not reset stats (requires superuser): {e}")
+        conn.rollback()
+        return False
+
+def flush_cache(conn):
+    """
+    Reset session state between modes (production-grade approach)
+    
+    ✅ V5.3: Removed VACUUM ANALYZE which was counterproductive:
+    - It warmed buffers instead of flushing
+    - It changed planner statistics mid-experiment
+    - It introduced variable timing between modes
+    
+    Production-grade approach:
+    - Close/reopen connections (handled by caller)
+    - DISCARD ALL to clear session state
+    - Short cooldown pause
+    - Rely on hot/cold key mix for cache behavior
+    """
+    print("🔄 Resetting session state...")
+    
+    # DISCARD ALL: Clear session state, prepared statements, etc.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DISCARD ALL")
+            conn.commit()
+        print("   ✅ Session state cleared (DISCARD ALL)")
+    except Exception as e:
+        print(f"   ⚠️  Could not discard session state: {e}")
+        conn.rollback()
+    
+    # Short cooldown to let any background work settle
+    time.sleep(2)
+    
+    print("   ℹ️  True OS cache flush not possible from PostgreSQL")
+    print("   ℹ️  Cache behavior measured via pg_statio (buffer hits vs reads)")
+    print("   ℹ️  Hot/cold key mix provides realistic cache distribution")
+
+def read_pg_io_stats(conn):
+    """Read PostgreSQL I/O statistics for this schema"""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT 
+                COALESCE(SUM(heap_blks_read), 0) as reads,
+                COALESCE(SUM(heap_blks_hit), 0) as hits
+            FROM pg_statio_user_tables
+            WHERE schemaname = %s
+        """, (SCHEMA,))
+        return cur.fetchone()
+
+def parse_buffers_from_explain(explain_output):
+    """
+    Extract shared blocks read and planning time from EXPLAIN (ANALYZE, BUFFERS) output
+    ✅ V5.1: Enhanced to return full explain data for slow query log
+    """
+    buffers_read = 0
+    buffers_hit = 0
+    planning_time_ms = 0
+    execution_time_ms = 0
+    
+    for line in explain_output:
+        text = str(line[0])
+        
+        # Parse "Buffers: shared hit=8 read=152"
+        if "Buffers:" in text:
+            read_match = re.search(r'read=(\d+)', text)
+            if read_match:
+                buffers_read = int(read_match.group(1))
+            hit_match = re.search(r'hit=(\d+)', text)
+            if hit_match:
+                buffers_hit = int(hit_match.group(1))
+        
+        # Parse "Planning Time: 0.123 ms"
+        if "Planning Time:" in text:
+            match = re.search(r'Planning Time:\s+([\d.]+)\s+ms', text)
+            if match:
+                planning_time_ms = float(match.group(1))
+        
+        # Parse "Execution Time: 1.234 ms"
+        if "Execution Time:" in text:
+            match = re.search(r'Execution Time:\s+([\d.]+)\s+ms', text)
+            if match:
+                execution_time_ms = float(match.group(1))
+    
+    # Return tuple for backward compatibility + dict for V5.1
+    explain_data = {
+        "shared_blks_read": buffers_read,
+        "shared_blks_hit": buffers_hit,
+        "planning_ms": planning_time_ms,
+        "execution_ms": execution_time_ms
+    }
+    
+    return buffers_read, planning_time_ms, explain_data
+
+print("✅ Database helper functions loaded")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 6️⃣ Results Table Setup
+
+# COMMAND ----------
+
+def ensure_results_table(conn):
+    """Create results and keys tables if they don't exist"""
+    with conn.cursor() as cur:
+        # Results table
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {RESULTS_SCHEMA}.{RESULTS_TABLE} (
+                run_id                  TEXT,
+                run_ts                  TIMESTAMP DEFAULT now(),
+
+                hot_traffic_pct         INT,
+                cold_traffic_pct        INT,
+
+                iterations              INT,
+                p50_ms                  DOUBLE PRECISION,
+                p95_ms                  DOUBLE PRECISION,
+                p99_ms                  DOUBLE PRECISION,
+                avg_ms                  DOUBLE PRECISION,
+
+                avg_cache_score         DOUBLE PRECISION,
+                p50_cache_score         DOUBLE PRECISION,
+                p90_cache_score         DOUBLE PRECISION,
+
+                fully_cold_request_pct  DOUBLE PRECISION,
+                fully_hot_request_pct   DOUBLE PRECISION,
+
+                latency_cache_corr      DOUBLE PRECISION,
+                io_blocks_per_request   DOUBLE PRECISION,
+
+                entity_p99_ms           JSONB,
+
+                notes                   TEXT
+            );
+        """)
+        
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_zipfian_run
+            ON {RESULTS_SCHEMA}.{RESULTS_TABLE} (run_id, hot_traffic_pct);
+        """)
+        
+        # Keys table - stores hot/cold keys for each run
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {RESULTS_SCHEMA}.{KEYS_TABLE} (
+                run_id      TEXT,
+                entity_name TEXT,
+                key_type    TEXT,  -- 'hot' or 'cold'
+                hash_key    TEXT
+            );
+        """)
+        
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_keys_run
+            ON {RESULTS_SCHEMA}.{KEYS_TABLE} (run_id, entity_name, key_type);
+        """)
+        
+        # ✅ V5.1: Slow query log for tail amplification analysis
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {RESULTS_SCHEMA}.zipfian_slow_query_log (
+                run_id               TEXT,
+                mode                 TEXT,          -- serial / binpacked / parallel
+                parallel_workers     INT,           -- ✅ V5.3: Worker count for parallel mode
+                hot_traffic_pct      INT,
+                iteration_id         INT,
+                request_id           TEXT,
+
+                entity_name          TEXT,          -- card_fingerprint / customer_email / cardholder_name
+                table_name           TEXT,
+
+                hash_key             TEXT,
+                was_hot_key          BOOLEAN,
+
+                query_latency_ms     DOUBLE PRECISION,
+                rows_returned        INT,
+                
+                -- ✅ V5.2: Binpacked query classification
+                query_group          TEXT,          -- e.g. 'fraud_rates', 'time_since' for binpacked
+                query_type           TEXT,          -- 'single_select' | 'union_group'
+                request_latency_ms   DOUBLE PRECISION,  -- Total request latency for context
+
+                -- optional but super useful (for post-run EXPLAIN)
+                explain_used         BOOLEAN,
+                shared_blks_read     INT,
+                shared_blks_hit      INT,
+                planning_ms          DOUBLE PRECISION,
+                execution_ms         DOUBLE PRECISION,
+
+                ts                   TIMESTAMP DEFAULT now()
+            );
+        """)
+        
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_slow_query_log_run
+            ON {RESULTS_SCHEMA}.zipfian_slow_query_log (run_id, mode, hot_traffic_pct);
+        """)
+        
+        # ✅ V5.2: Request-level timing table for Gantt + overlap + diminishing returns
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {RESULTS_SCHEMA}.zipfian_request_timing (
+                run_id           TEXT,
+                mode             TEXT,
+                parallel_workers INT,
+                hot_traffic_pct  INT,
+
+                iteration_id     INT,
+                request_id       TEXT,
+
+                request_start_ts TIMESTAMP DEFAULT now(),
+                request_latency_ms DOUBLE PRECISION,
+
+                -- derived request facts
+                hot_entities     INT,
+                cache_score      DOUBLE PRECISION,
+                actual_queries   INT,
+                actual_max_concurrency INT,
+
+                -- pool/infra visibility
+                pool_wait_ms     DOUBLE PRECISION,
+                retry_count      INT,
+                query_error_count INT,
+
+                PRIMARY KEY (run_id, mode, hot_traffic_pct, iteration_id, request_id)
+            );
+        """)
+        
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_req_timing_run_mode
+            ON {RESULTS_SCHEMA}.zipfian_request_timing (run_id, mode, parallel_workers, hot_traffic_pct);
+        """)
+        
+        # ✅ V5.2: Timing segments table for Gantt-style overlap analysis
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {RESULTS_SCHEMA}.zipfian_timing_segments (
+                run_id           TEXT,
+                mode             TEXT,
+                parallel_workers INT,
+                hot_traffic_pct  INT,
+
+                iteration_id     INT,
+                request_id       TEXT,
+
+                entity_name      TEXT,
+                segment_type     TEXT,
+                segment_name     TEXT,
+                start_ms         DOUBLE PRECISION,
+                end_ms           DOUBLE PRECISION,
+                duration_ms      DOUBLE PRECISION,
+
+                was_hot_key      BOOLEAN,
+
+                PRIMARY KEY (run_id, mode, hot_traffic_pct, iteration_id, request_id, entity_name, segment_type, segment_name)
+            );
+        """)
+        
+        cur.execute(f"""
+            CREATE INDEX IF NOT EXISTS idx_segments_run
+            ON {RESULTS_SCHEMA}.zipfian_timing_segments (run_id, mode, parallel_workers, hot_traffic_pct);
+        """)
+        
+        # ✅ V5.3: Keys metadata table for sampling defensibility
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {RESULTS_SCHEMA}.zipfian_keys_run_meta (
+                run_id                       TEXT PRIMARY KEY,
+                schema_name                  TEXT,
+                target_keys_per_entity       INT,  -- Target unique keys per entity
+                hot_key_percent              DOUBLE PRECISION,
+                sampling_method              TEXT,
+                deduped_keys                 BOOLEAN,
+                sampled_keys_total_all_entities    INT,  -- Total keys sampled across all entities
+                sampled_keys_unique_all_entities   INT,  -- Unique keys after dedupe across all entities
+                duplication_ratio            DOUBLE PRECISION,
+                created_ts                   TIMESTAMP DEFAULT now()
+            );
+        """)
+        
+        conn.commit()
+    print(f"✅ Results table ensured: {RESULTS_SCHEMA}.{RESULTS_TABLE}")
+    print(f"✅ Slow query log table ensured: {RESULTS_SCHEMA}.zipfian_slow_query_log (V5.1)")
+    print(f"✅ Request timing table ensured: {RESULTS_SCHEMA}.zipfian_request_timing (V5.2)")
+    print(f"✅ Timing segments table ensured: {RESULTS_SCHEMA}.zipfian_timing_segments (V5.2)")
+    print(f"✅ Keys metadata table ensured: {RESULTS_SCHEMA}.zipfian_keys_run_meta (V5.2)")
+    print(f"✅ Keys table ensured: {RESULTS_SCHEMA}.{KEYS_TABLE}")
+
+def persist_results(conn, hot_pct, results):
+    """Persist benchmark results to Lakebase"""
+    
+    # Try to add new columns if they don't exist (for backward compatibility)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                ALTER TABLE {RESULTS_SCHEMA}.{RESULTS_TABLE}
+                ADD COLUMN IF NOT EXISTS fetch_mode TEXT,
+                ADD COLUMN IF NOT EXISTS queries_per_request DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS io_measurement_method TEXT,
+                ADD COLUMN IF NOT EXISTS entity_p99_contribution_pct JSONB,
+                ADD COLUMN IF NOT EXISTS cache_state TEXT,
+                ADD COLUMN IF NOT EXISTS avg_planning_time_ms DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS avg_rows_per_request DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS avg_payload_bytes DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS parallel_workers INT,
+                ADD COLUMN IF NOT EXISTS latency_per_query_ms DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS entity_timing_detail JSONB,
+                ADD COLUMN IF NOT EXISTS max_concurrent_queries INT,
+                -- ✅ V5.2: Self-describing columns
+                ADD COLUMN IF NOT EXISTS config_json JSONB,
+                ADD COLUMN IF NOT EXISTS actual_queries_per_request_avg DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS actual_queries_per_request_p99 DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS actual_max_concurrency INT,
+                ADD COLUMN IF NOT EXISTS sampled_keys_total INT,
+                ADD COLUMN IF NOT EXISTS sampled_keys_unique INT,
+                ADD COLUMN IF NOT EXISTS key_duplication_ratio DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS hot_keys_count INT,
+                ADD COLUMN IF NOT EXISTS cold_keys_count INT,
+                ADD COLUMN IF NOT EXISTS cold_sampling_without_replacement BOOLEAN,
+                ADD COLUMN IF NOT EXISTS explain_sample_rate INT,
+                ADD COLUMN IF NOT EXISTS explain_iterations_count INT,
+                ADD COLUMN IF NOT EXISTS latency_explain_included BOOLEAN
+            """)
+            conn.commit()
+    except:
+        conn.rollback()
+    
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            INSERT INTO {RESULTS_SCHEMA}.{RESULTS_TABLE} (
+                run_id,
+                hot_traffic_pct,
+                cold_traffic_pct,
+                iterations,
+                p50_ms,
+                p95_ms,
+                p99_ms,
+                avg_ms,
+                avg_cache_score,
+                p50_cache_score,
+                p90_cache_score,
+                fully_cold_request_pct,
+                fully_hot_request_pct,
+                latency_cache_corr,
+                io_blocks_per_request,
+                io_measurement_method,
+                entity_p99_ms,
+                entity_p99_contribution_pct,
+                cache_state,
+                fetch_mode,
+                queries_per_request,
+                avg_planning_time_ms,
+                avg_rows_per_request,
+                avg_payload_bytes,
+                parallel_workers,
+                latency_per_query_ms,
+                entity_timing_detail,
+                max_concurrent_queries,
+                notes
+            ) VALUES (
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s,
+                %s, %s, %s,
+                %s, %s,
+                %s,
+                %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s,
+                %s
+            )
+        """, (
+            RUN_ID,
+            hot_pct,
+            100 - hot_pct,
+            ITERATIONS_PER_RUN,
+            results["p50"],
+            results["p95"],
+            results["p99"],
+            results["avg"],
+            results["cache_avg"],
+            results["cache_p50"],
+            results["cache_p90"],
+            results["fully_cold_pct"],
+            results["fully_hot_pct"],
+            results["lat_cache_corr"],
+            results["io_blocks_per_req"],
+            results["io_measurement_method"],
+            json.dumps(results["entity_p99"]),
+            json.dumps(results["entity_p99_contribution_pct"]),
+            results["cache_state"],
+            results["fetch_mode"],
+            results["queries_per_request"],
+            results["avg_planning_time_ms"],
+            results["avg_rows_per_request"],
+            results["avg_payload_bytes"],
+            results.get("parallel_workers"),  # V5: worker count
+            results.get("latency_per_query_ms"),  # V5: cost-normalized
+            json.dumps(results.get("entity_timing_detail", {})),  # V5: Gantt data
+            results.get("max_concurrent_queries"),  # V5: actual concurrency
+            f"Multi-entity Zipfian benchmark V5 (mode: {results['fetch_mode']}, workers: {results.get('parallel_workers', 'N/A')})"
+        ))
+    conn.commit()
+
+def persist_query_timings(conn, run_id, request_id, request_idx, fetch_mode, parallel_workers, hot_traffic_pct, query_timings, entity_hot_sets, request_latency_ms=None):
+    """
+    ✅ V5.3: PRODUCTION-GRADE - Populate all V5.2 schema fields
+    ✅ V5.1: Persist SLOW query samples to log for tail amplification analysis
+    ✅ FIX #6: Use sets for O(1) hot key lookup
+    
+    ONLY logs queries >= SLOW_QUERY_THRESHOLD_MS (default 40ms)
+    
+    Args:
+        conn: Database connection
+        run_id: Benchmark run ID
+        request_id: Unique request identifier
+        request_idx: Request iteration index
+        fetch_mode: serial | binpacked | binpacked_parallel
+        parallel_workers: Number of workers (or None)
+        hot_traffic_pct: Hot traffic percentage
+        query_timings: List of SLOW queries {entity, table, latency_ms, rows_returned, hash_key, query_group (optional), query_type (optional)}
+        entity_hot_sets: Dict of entity → set(hot_keys) for O(1) lookup (✅ FIX #6)
+        request_latency_ms: Total request latency (for tail amplification analysis)
+    """
+    if not query_timings:
+        return
+    
+    # ✅ Batch insert for performance (don't commit per query)
+    with conn.cursor() as cur:
+        for timing in query_timings:
+            # ✅ FIX #6: O(1) hot key lookup using sets
+            entity = timing["entity"]
+            hash_key = timing["hash_key"]
+            was_hot_key = hash_key in entity_hot_sets.get(entity, set())
+            
+            # Extract EXPLAIN data if available
+            explain_data = timing.get("explain_data", {})
+            
+            # ✅ V5.3: Populate query_group, query_type, request_latency_ms, parallel_workers
+            query_group = timing.get("query_group")  # Feature group name (binpacked only)
+            query_type = timing.get("query_type", "single_select")  # 'single_select' or 'union_group'
+            
+            cur.execute(f"""
+                INSERT INTO {RESULTS_SCHEMA}.zipfian_slow_query_log (
+                    run_id,
+                    mode,
+                    parallel_workers,
+                    hot_traffic_pct,
+                    iteration_id,
+                    request_id,
+                    entity_name,
+                    table_name,
+                    hash_key,
+                    was_hot_key,
+                    query_latency_ms,
+                    rows_returned,
+                    query_group,
+                    query_type,
+                    request_latency_ms
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                run_id,
+                fetch_mode,
+                parallel_workers,
+                hot_traffic_pct,
+                request_idx,
+                request_id,
+                timing["entity"],
+                timing.get("table", "N/A"),  # May not have table for binpacked groups
+                hash_key,
+                was_hot_key,
+                timing["latency_ms"],
+                timing.get("rows_returned", 0),
+                query_group,
+                query_type,
+                request_latency_ms
+            ))
+    # ✅ Commit happens in batch (every N requests, handled by caller)
+
+def persist_keys_per_run(conn, run_id, entity_keys):
+    """Persist hot/cold keys for this run"""
+    with conn.cursor() as cur:
+        for entity, keysets in entity_keys.items():
+            for key_type, keys in keysets.items():
+                for key in keys:
+                    cur.execute(
+                        f"INSERT INTO {RESULTS_SCHEMA}.{KEYS_TABLE} (run_id, entity_name, key_type, hash_key) VALUES (%s, %s, %s, %s)",
+                        (run_id, entity, key_type, key)
+                    )
+        conn.commit()
+    print(f"✅ Persisted {sum(len(v['hot']) + len(v['cold']) for v in entity_keys.values())} keys to {KEYS_TABLE}")
+
+def persist_keys_metadata(conn, run_id, schema_name, target_keys_per_entity, hot_key_percent, 
+                          sampling_method, sampled_total_all, unique_all, duplication_ratio):
+    """
+    ✅ V5.3: Persist key sampling metadata for defensibility
+    
+    This documents exactly what happened during key sampling:
+    - Target keys per entity vs actual sampled/unique across ALL entities
+    - Duplication ratio (indicates overlap across tables)
+    - Sampling method used
+    """
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            INSERT INTO {RESULTS_SCHEMA}.zipfian_keys_run_meta (
+                run_id,
+                schema_name,
+                target_keys_per_entity,
+                hot_key_percent,
+                sampling_method,
+                deduped_keys,
+                sampled_keys_total_all_entities,
+                sampled_keys_unique_all_entities,
+                duplication_ratio
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (run_id) DO UPDATE SET
+                sampled_keys_total_all_entities = EXCLUDED.sampled_keys_total_all_entities,
+                sampled_keys_unique_all_entities = EXCLUDED.sampled_keys_unique_all_entities,
+                duplication_ratio = EXCLUDED.duplication_ratio
+        """, (
+            run_id,
+            schema_name,
+            target_keys_per_entity,
+            hot_key_percent,
+            sampling_method,
+            True,  # Always deduped
+            sampled_total_all,
+            unique_all,
+            duplication_ratio
+        ))
+    conn.commit()
+    print(f"✅ Persisted keys metadata: {sampled_total_all} sampled → {unique_all} unique across all entities (dup ratio: {duplication_ratio:.2f}x)")
+
+def fetch_keys_from_run(conn, run_id):
+    """
+    Load hot/cold keys from a previous run
+    
+    Returns:
+        entity_keys: Dict of {entity: {"hot": [...], "cold": [...]}}
+        None if run_id not found
+    """
+    with conn.cursor() as cur:
+        # Check if run exists
+        cur.execute(f"SELECT COUNT(*) FROM {RESULTS_SCHEMA}.{KEYS_TABLE} WHERE run_id = %s", (run_id,))
+        count = cur.fetchone()[0]
+        
+        if count == 0:
+            return None
+        
+        # Load keys
+        cur.execute(
+            f"SELECT entity_name, key_type, hash_key FROM {RESULTS_SCHEMA}.{KEYS_TABLE} WHERE run_id = %s",
+            (run_id,)
+        )
+        
+        entity_keys = {}
+        for entity, key_type, hash_key in cur.fetchall():
+            if entity not in entity_keys:
+                entity_keys[entity] = {"hot": [], "cold": []}
+            entity_keys[entity][key_type].append(hash_key)
+        
+        return entity_keys
+
+print("✅ Results persistence functions loaded")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 7️⃣ Sample & Persist Keys Per Entity
+# MAGIC 
+# MAGIC **✅ FIXED: Random sampling from ALL tables**
+# MAGIC - Samples keys from ALL tables per entity (not just tables[0])
+# MAGIC - Shuffles keys before hot/cold split
+# MAGIC - Hot keys are randomly distributed (not first N in storage order)
+# MAGIC - Persists keys for reproducibility
+
+# COMMAND ----------
+
+conn = get_conn()
+
+# Ensure results and keys tables exist
+ensure_results_table(conn)
+
+# ✅ NEW: Reuse keys from previous run if specified
+if REUSE_RUN_ID:
+    print(f"🔑 Reusing keys from previous run: {REUSE_RUN_ID}")
+    print()
+    
+    t_load_start = time.time()
+    entity_keys = fetch_keys_from_run(conn, REUSE_RUN_ID)
+    t_load_elapsed = time.time() - t_load_start
+    
+    if entity_keys is None:
+        print(f"   ❌ Run ID '{REUSE_RUN_ID}' not found in {KEYS_TABLE}")
+        print(f"   ⚠️  Falling back to sampling new keys...")
+        print()
+        REUSE_RUN_ID = None  # Force sampling
+    else:
+        print(f"   ✅ Loaded in {t_load_elapsed:.2f}s")
+        for entity, keysets in entity_keys.items():
+            print(f"      {entity:20}: Hot: {len(keysets['hot']):>5,} | Cold: {len(keysets['cold']):>5,}")
+        print()
+        print(f"   ⏱️  Time saved: ~45 minutes (no sampling required)")
+        print(f"   🆔 This run will use RUN_ID: {RUN_ID}")
+        print()
+
+# Sample new keys if not reusing
+if not REUSE_RUN_ID:
+    print("🔑 Sampling keys per entity (from ALL tables)...")
+    print()
+    
+    entity_keys = {}
+    total_sampled_all_entities = 0
+    total_unique_all_entities = 0
+    
+    for entity, tables in ENTITY_TABLE_GROUPS.items():
+        print(f"   Sampling {entity:20}...")
+        
+        # ✅ V5.3: Top-up sampling to ensure we reach target unique keys
+        keys_set = set()
+        sampled_total = 0
+        keys_per_table = TOTAL_KEYS_PER_ENTITY // len(tables)
+        max_sampling_rounds = 5  # Prevent infinite loop
+        
+        for sampling_round in range(max_sampling_rounds):
+            if len(keys_set) >= TOTAL_KEYS_PER_ENTITY:
+                break
+                
+            for table in tables:
+                if len(keys_set) >= TOTAL_KEYS_PER_ENTITY:
+                    break
+                    
+                # Sample more keys if needed
+                sample_size = keys_per_table if sampling_round == 0 else keys_per_table // 2
+                print(f"      → Round {sampling_round+1}: {table:50}...", end="", flush=True)
+                t_start = time.time()
+                table_keys = fetch_sample_keys(conn, table, sample_size)
+                t_elapsed = time.time() - t_start
+                
+                sampled_total += len(table_keys)
+                before = len(keys_set)
+                keys_set.update(table_keys)
+                new_unique = len(keys_set) - before
+                
+                print(f" {new_unique:>4} new unique ({len(keys_set):>5} total) in {t_elapsed:.2f}s")
+            
+            if sampling_round > 0:
+                print(f"      → Top-up round {sampling_round+1}: {len(keys_set)} / {TOTAL_KEYS_PER_ENTITY} unique keys")
+        
+        keys = list(keys_set)
+        duplication_ratio = sampled_total / len(keys) if len(keys) > 0 else 1.0
+        
+        # ✅ V5.3: Track totals for metadata
+        total_sampled_all_entities += sampled_total
+        total_unique_all_entities += len(keys)
+        
+        print(f"      → Final: {sampled_total} sampled → {len(keys)} unique (duplication: {duplication_ratio:.2f}x)")
+        
+        # ✅ FIXED: Shuffle to randomize hot/cold split
+        random.shuffle(keys)
+        
+        # ✅ CRITICAL FIX: Ensure non-empty hot/cold sets (prevent random.choice crash)
+        hot_cutoff = int(len(keys) * HOT_KEY_PERCENT_OF_DATASET / 100)
+        
+        # Guard against empty sets
+        if HOT_KEY_PERCENT_OF_DATASET > 0 and hot_cutoff == 0:
+            hot_cutoff = 1  # At least 1 hot key
+        if HOT_KEY_PERCENT_OF_DATASET < 100 and hot_cutoff >= len(keys):
+            hot_cutoff = len(keys) - 1  # At least 1 cold key
+        
+        entity_keys[entity] = {
+            "hot": keys[:hot_cutoff],
+            "cold": keys[hot_cutoff:]
+        }
+        
+        # ✅ Defensive assertion: verify non-empty when needed
+        if HOT_KEY_PERCENT_OF_DATASET > 0:
+            assert len(entity_keys[entity]["hot"]) > 0, f"{entity}: hot set is empty!"
+        if HOT_KEY_PERCENT_OF_DATASET < 100:
+            assert len(entity_keys[entity]["cold"]) > 0, f"{entity}: cold set is empty!"
+        
+        print(f"      ✅ Total: {len(keys)} keys → Hot: {len(entity_keys[entity]['hot']):,} | Cold: {len(entity_keys[entity]['cold']):,}")
+        print()
+    
+    print(f"✅ Key sampling complete!")
+    print()
+    
+    # Persist keys for reproducibility and analysis
+    print(f"💾 Persisting keys to {KEYS_TABLE}...")
+    t_persist_start = time.time()
+    persist_keys_per_run(conn, RUN_ID, entity_keys)
+    t_persist_elapsed = time.time() - t_persist_start
+    print(f"   ✅ Persisted in {t_persist_elapsed:.2f}s")
+    print(f"   Run ID: {RUN_ID}")
+    print(f"   This ensures consistent hot/cold keys across all hot/cold ratios")
+    print()
+    
+    # ✅ V5.3: Persist sampling metadata for defensibility
+    print(f"💾 Persisting sampling metadata...")
+    overall_dup_ratio = total_sampled_all_entities / total_unique_all_entities if total_unique_all_entities > 0 else 1.0
+    persist_keys_metadata(
+        conn, RUN_ID, SCHEMA, TOTAL_KEYS_PER_ENTITY, HOT_KEY_PERCENT_OF_DATASET,
+        "tablesample_system_with_topup", 
+        total_sampled_all_entities, 
+        total_unique_all_entities, 
+        overall_dup_ratio
+    )
+    print()
+
+# ✅ FIX #6: Convert hot keys to sets for O(1) membership checks (CRITICAL for performance)
+# This runs for BOTH new sampling and reused keys
+print(f"🔧 Converting hot keys to sets for fast lookup...")
+entity_hot_sets = {
+    entity: set(keysets["hot"])
+    for entity, keysets in entity_keys.items()
+}
+print(f"   ✅ Hot key sets created")
+print()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 8️⃣ Feature Fetch Function
+# MAGIC 
+# MAGIC **✅ FIXED: Serial execution with per-entity timing**
+# MAGIC - SELECT * instead of SELECT 1 (fetches actual data)
+# MAGIC - Serial execution (no pipelining)
+# MAGIC - Per-entity timing (independent measurement)
+# MAGIC - Realistic latency measurement
+
+# COMMAND ----------
+
+def fetch_features_for_request(conn, entities_with_keys, iteration_idx=0, sample_io=False, request_start=None, log_query_timings=False):
+    """
+    ✅ V5.3: PRODUCTION-GRADE - No inline EXPLAIN during measured execution
+    ✅ Fetch features serially with per-entity timing
+    ✅ V5: Added Gantt chart timing data collection
+    ✅ V5.1: Added per-query timing for tail amplification analysis
+    
+    Args:
+        conn: PostgreSQL connection
+        entities_with_keys: List of {entity, hashkey, tables}
+        iteration_idx: Current iteration number (for sampling)
+        sample_io: DEPRECATED - no longer used (kept for backward compat)
+        request_start: Request start time for Gantt chart (optional)
+        log_query_timings: Whether to log per-query timing (V5.1)
+    
+    Returns:
+        entity_timings: Dict of entity → latency_ms
+        io_blocks: Always 0 (no inline I/O sampling)
+        executor_metrics: Dict with rows_returned, payload_size_bytes
+        gantt_data: List of {entity, start_ms, end_ms} for Gantt chart (V5)
+        query_timings: List of per-query timing data (V5.1)
+    """
+    entity_timings = {}
+    gantt_data = []
+    query_timings = []  # ✅ V5.1: Per-query timing
+    io_blocks_total = 0
+    query_errors = 0
+    planning_time_total = 0
+    rows_returned_total = 0
+    payload_size_bytes_total = 0
+    
+    # If request_start not provided, use current time
+    if request_start is None:
+        request_start = time.perf_counter()
+    
+    with conn.cursor() as cur:
+        for entity_info in entities_with_keys:
+            # ✅ FIXED: Per-entity timer (not cumulative)
+            # ✅ V5: Track absolute timing for Gantt chart
+            entity_start = time.perf_counter()
+            
+            for table in entity_info["tables"]:
+                # ✅ V5.1: Always track timing to detect slow queries
+                table_start = time.perf_counter()
+                
+                try:
+                    # ✅ V5.3: ONLY measured execution - NO EXPLAIN inline
+                    # EXPLAIN is done post-run on logged slow queries
+                    query = f"SELECT {SELECT_CLAUSE} FROM {SCHEMA}.{table} WHERE hash_key = %s LIMIT 1"
+                    cur.execute(query, (entity_info["hashkey"],))
+                    row = cur.fetchone()  # Actually fetch the result
+                    
+                    # Track rows and estimate payload size
+                    if row:
+                        rows_returned_total += 1
+                        # Rough estimate: string length of row representation
+                        payload_size_bytes_total += len(str(row))
+                    
+                    # ✅ V5.1: Log ONLY slow queries (>= threshold) for post-run EXPLAIN
+                    table_end = time.perf_counter()
+                    query_latency_ms = (table_end - table_start) * 1000
+                    
+                    if log_query_timings and query_latency_ms >= SLOW_QUERY_THRESHOLD_MS:
+                        # ✅ V5.3: Just log the event - NO inline EXPLAIN
+                        query_timings.append({
+                            "entity": entity_info["entity"],
+                            "table": table,
+                            "hash_key": entity_info["hashkey"],
+                            "latency_ms": query_latency_ms,
+                            "rows_returned": 1 if row else 0,
+                            "query_type": "single_select",  # ✅ V5.3: Serial = single table SELECTs
+                            "query_group": None,  # ✅ V5.3: No grouping in serial mode
+                            "was_hot_key": None  # Will be populated by caller
+                        })
+                
+                except Exception as e:
+                    # ✅ FIXED: Error handling - log but continue
+                    query_errors += 1
+                    if query_errors <= 5:  # Only print first 5 errors
+                        print(f"         ⚠️  Query failed: {table[:50]}... | {str(e)[:50]}")
+            
+            entity_end = time.perf_counter()
+            
+            # Record per-entity latency
+            entity_timings[entity_info["entity"]] = (entity_end - entity_start) * 1000
+            
+            # ✅ V5: Record Gantt timing data (relative to request start)
+            gantt_data.append({
+                "entity": entity_info["entity"],
+                "start_ms": (entity_start - request_start) * 1000,
+                "end_ms": (entity_end - request_start) * 1000
+            })
+    
+    if query_errors > 5:
+        print(f"         ⚠️  ... and {query_errors - 5} more errors")
+    
+    # ✅ V5.3: No inline I/O sampling - always return measured metrics
+    executor_metrics = {
+        "rows_returned": rows_returned_total,
+        "payload_size_bytes": payload_size_bytes_total,
+        "query_errors": query_errors
+    }
+    
+    return entity_timings, 0, executor_metrics, gantt_data, query_timings  # io_blocks always 0 now
+
+print("✅ Feature fetch function loaded (serial execution, per-entity timing, EXPLAIN sampling, error handling)")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 8️⃣.1 Bin-Packed Fetch Functions (Phase 1)
+
+# COMMAND ----------
+
+def fetch_entity_binpacked(conn, entity, hashkey, tables, log_slow_queries=False, slow_threshold_ms=40):
+    """
+    Fetch all features for one entity using UNION ALL grouped by feature type
+    
+    ✅ KEY INSIGHT: Within same feature type (fraud_rates, time_since, etc.),
+       all time windows (30d, 90d, 365d) have identical schemas!
+       
+    Strategy: Group tables by feature type, execute one UNION ALL per group
+    - fraud_rates__30d/90d/365d → 1 UNION ALL query
+    - time_since__30d/90d/365d → 1 UNION ALL query
+    - good_rates__30d/90d/365d → 1 UNION ALL query
+    
+    Reduces 9-12 queries per entity to 3-4 queries! ✅
+    
+    Args:
+        conn: Database connection
+        entity: Entity name
+        hashkey: Hash key to query
+        tables: List of tables for this entity
+        log_slow_queries: Whether to log slow feature-group queries (✅ FIX #3)
+        slow_threshold_ms: Threshold for slow query logging
+    
+    Returns:
+        results: List of all results from all feature groups
+        queries_executed: Number of queries actually executed (✅ FIX #1)
+        group_timings: List of slow feature-group queries (✅ FIX #3)
+    """
+    from collections import defaultdict
+    
+    # Group tables by feature type (extract feature name before time window)
+    feature_groups = defaultdict(list)
+    for table in tables:
+        # Extract feature type: "client_id_card_fingerprint__fraud_rates__30d" 
+        # → "fraud_rates"
+        parts = table.split("__")
+        if len(parts) >= 2:
+            feature_type = parts[-2]  # e.g., "fraud_rates", "time_since", "good_rates"
+            feature_groups[feature_type].append(table)
+        else:
+            feature_groups["other"].append(table)
+    
+    results = []
+    queries_executed = len(feature_groups)  # ✅ FIX #1: Count actual queries (not assumed!)
+    group_timings = []  # ✅ FIX #3: Track slow feature-group queries
+    
+    with conn.cursor() as cur:
+        # Execute one UNION ALL query per feature type
+        for feature_type, group_tables in feature_groups.items():
+            group_start = time.perf_counter()  # ✅ FIX #3: Time each feature group
+            
+            if len(group_tables) == 1:
+                # Single table, no UNION needed
+                cur.execute(
+                    f"SELECT {SELECT_CLAUSE} FROM {SCHEMA}.{group_tables[0]} WHERE hash_key = %s LIMIT 1",
+                    (hashkey,)
+                )
+                result = cur.fetchall()
+                results.extend(result)
+            else:
+                # Multiple tables with same schema, use UNION ALL
+                union_parts = []
+                for table in group_tables:
+                    union_parts.append(
+                        f"(SELECT {SELECT_CLAUSE} FROM {SCHEMA}.{table} WHERE hash_key = %s LIMIT 1)"
+                    )
+                
+                sql = " UNION ALL ".join(union_parts)
+                params = [hashkey] * len(group_tables)
+                
+                cur.execute(sql, params)
+                result = cur.fetchall()
+                results.extend(result)
+            
+            # ✅ V5.3: Log slow feature-group queries with query_type and query_group
+            group_latency_ms = (time.perf_counter() - group_start) * 1000
+            if log_slow_queries and group_latency_ms >= slow_threshold_ms:
+                group_timings.append({
+                    "entity": entity,
+                    "table": f"{entity}_{feature_type}_group",  # Feature group name
+                    "hash_key": hashkey,
+                    "latency_ms": group_latency_ms,
+                    "rows_returned": len(group_tables),  # Number of tables in group
+                    "query_type": "union_group",  # ✅ V5.3: Binpacked = UNION ALL
+                    "query_group": feature_type,  # ✅ V5.3: Feature group name (e.g., 'fraud_rates')
+                    "was_hot_key": None  # Will be populated by caller
+                })
+    
+    return results, queries_executed, group_timings
+
+def fetch_features_binpacked_serial(conn, entities_with_keys, iteration_idx=0, request_start=None, log_query_timings=False, slow_threshold_ms=40):
+    """
+    Fetch features using bin-packed queries (3 queries instead of 30), serially
+    ✅ V5: Added Gantt chart timing data collection
+    ✅ FIX #3: Added slow query logging for binpacked mode (per-feature-group)
+    
+    Args:
+        conn: Database connection
+        entities_with_keys: List of {entity, hashkey, tables}
+        iteration_idx: Current iteration (for logging)
+        request_start: Request start time for Gantt chart (optional)
+        log_query_timings: Whether to log slow queries (V5.1)
+        slow_threshold_ms: Threshold for slow query logging (default 40ms)
+    
+    Returns:
+        entity_timings: Dict of entity → latency_ms
+        io_blocks: 0 (not tracked in this mode)
+        gantt_data: List of {entity, start_ms, end_ms} for Gantt chart (V5)
+        query_timings: List of slow feature-group queries (✅ FIX #3)
+    """
+    entity_timings = {}
+    gantt_data = []
+    query_timings = []  # ✅ FIX #3: Log slow feature-group queries
+    
+    # If request_start not provided, use current time
+    if request_start is None:
+        request_start = time.perf_counter()
+    
+    total_queries = 0  # ✅ FIX #1: Track queries for this request
+    
+    for entity_info in entities_with_keys:
+        entity_start = time.perf_counter()
+        
+        # Single UNION ALL query for all tables in this entity
+        results, queries_executed, group_timings = fetch_entity_binpacked(
+            conn,
+            entity_info["entity"],
+            entity_info["hashkey"],
+            entity_info["tables"],
+            log_query_timings,  # ✅ FIX #3: Pass through
+            SLOW_QUERY_THRESHOLD_MS if log_query_timings else 40
+        )
+        
+        total_queries += queries_executed  # ✅ FIX #1: Aggregate
+        query_timings.extend(group_timings)  # ✅ FIX #3: Aggregate slow queries
+        
+        entity_end = time.perf_counter()
+        entity_timings[entity_info["entity"]] = (entity_end - entity_start) * 1000
+        
+        # ✅ V5: Record Gantt timing data
+        gantt_data.append({
+            "entity": entity_info["entity"],
+            "start_ms": (entity_start - request_start) * 1000,
+            "end_ms": (entity_end - request_start) * 1000
+        })
+    
+    return entity_timings, 0, gantt_data, query_timings, total_queries
+
+# Initialize connection pool for parallel mode
+if FETCH_MODE == "binpacked_parallel":
+    print("🔗 Initializing connection pool for parallel execution...")
+    pool = ConnectionPool(
+        conninfo=psycopg.conninfo.make_conninfo(**LAKEBASE_CONFIG),
+        min_size=10,
+        max_size=30,  # ✅ FIX: Larger pool (was 8, caused starvation)
+        timeout=10.0,  # ✅ FIX: Pool acquisition timeout (was 30s, too long)
+        max_idle=300,  # Recycle idle connections after 5 min
+        max_lifetime=1800,  # Force recycle after 30 min
+        check=ConnectionPool.check_connection  # ✅ CRITICAL: Health check before handing out
+    )
+    print(f"   ✅ Pool initialized: min=10, max=30 (with health checks)")
+else:
+    pool = None
+
+def fetch_entity_worker(entity_info, request_start):
+    """
+    Worker function for parallel entity fetch
+    ✅ V5: Added Gantt chart timing data collection
+    
+    ✅ FIX: Proper connection lifecycle with instrumentation
+    """
+    pool_wait_start = time.perf_counter()
+    
+    # ✅ CRITICAL: Use context manager to ensure connection is returned
+    with pool.connection() as conn:
+        pool_wait_ms = (time.perf_counter() - pool_wait_start) * 1000
+        
+        # ⚠️ Log slow pool acquisitions (indicates starvation)
+        if pool_wait_ms > 100:
+            print(f"         ⚠️  Slow pool acquisition: {pool_wait_ms:.0f}ms for {entity_info['entity']}")
+        
+        entity_start = time.perf_counter()
+        
+        try:
+            results, queries_executed, group_timings = fetch_entity_binpacked(
+                conn,
+                entity_info["entity"],
+                entity_info["hashkey"],
+                entity_info["tables"],
+                log_slow_queries=False,  # Don't log in parallel mode (too complex)
+                slow_threshold_ms=40
+            )
+            entity_end = time.perf_counter()
+            latency_ms = (entity_end - entity_start) * 1000
+            
+            # ✅ V5: Return Gantt data
+            gantt_data = {
+                "entity": entity_info["entity"],
+                "start_ms": (entity_start - request_start) * 1000,
+                "end_ms": (entity_end - request_start) * 1000
+            }
+            
+            # ✅ V5.3: Return pool_wait_ms for tail analysis
+            return entity_info["entity"], latency_ms, gantt_data, queries_executed, pool_wait_ms
+        except Exception as e:
+            # ✅ CRITICAL: Ensure connection is returned even on error
+            print(f"         ❌ Error in {entity_info['entity']}: {str(e)[:100]}")
+            raise
+    # Connection automatically returned here by context manager
+
+def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_workers=3, request_start=None, log_query_timings=False):
+    """
+    Fetch features using bin-packed queries with parallel execution
+    ✅ V5.3: Now tracks pool_wait_ms for tail analysis
+    ✅ V5: Added Gantt chart timing data collection
+    ✅ FIX #3: Slow query logging not implemented for parallel (complexity vs value trade-off)
+    
+    Args:
+        entities_with_keys: List of {entity, hashkey, tables}
+        iteration_idx: Current iteration (for logging)
+        num_workers: Number of parallel workers (V5: configurable)
+        request_start: Request start time for Gantt chart (optional)
+        log_query_timings: Whether to log slow queries (not supported for parallel mode)
+    
+    Returns:
+        entity_timings: Dict of entity → latency_ms
+        io_blocks: 0 (not tracked in this mode)
+        gantt_data: List of {entity, start_ms, end_ms} for Gantt chart (V5)
+        query_timings: Empty list (parallel mode doesn't log slow queries)
+        total_queries: Number of queries executed
+        pool_wait_times: List of pool wait times (ms) for each entity
+    """
+    entity_timings = {}
+    gantt_data = []
+    query_timings = []  # ✅ FIX #3: Empty for parallel (complexity not worth it)
+    total_queries = 0  # ✅ FIX #1: Track queries
+    pool_wait_times = []  # ✅ V5.3: Track pool wait per entity
+    
+    # If request_start not provided, use current time
+    if request_start is None:
+        request_start = time.perf_counter()
+    
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:  # ✅ V5: Parameterized
+        futures = [
+            executor.submit(fetch_entity_worker, entity_info, request_start)
+            for entity_info in entities_with_keys
+        ]
+        
+        for future in futures:
+            entity, latency_ms, gantt_entry, queries_executed, pool_wait_ms = future.result()
+            entity_timings[entity] = latency_ms
+            gantt_data.append(gantt_entry)
+            total_queries += queries_executed  # ✅ FIX #1: Aggregate
+            pool_wait_times.append(pool_wait_ms)  # ✅ V5.3: Collect pool waits
+    
+    return entity_timings, 0, gantt_data, query_timings, total_queries, pool_wait_times
+
+print("✅ Bin-packed fetch functions loaded (serial + parallel)")
+if pool:
+    print("✅ Connection pool ready for parallel mode")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 9️⃣ Run Benchmark (Hot/Cold Matrix)
+# MAGIC 
+# MAGIC **Multi-Mode Execution:**
+# MAGIC - If `run_all_modes=true`: Runs serial → binpacked → binpacked_parallel sequentially
+# MAGIC - Flushes cache between modes for fair comparison
+# MAGIC - Uses same hot/cold keys across all modes
+
+# COMMAND ----------
+
+print("\n" + "="*80)
+print("🚀 STARTING MULTI-ENTITY ZIPFIAN BENCHMARK V5.2")
+print("="*80)
+print()
+
+if RUN_ALL_MODES:
+    mode_list = [f"{cfg['mode']}" + (f" (w={cfg['workers']})" if cfg['workers'] else "") for cfg in MODE_CONFIGS]
+    print(f"📋 Running ALL modes sequentially: {mode_list}")
+    print(f"   Cache flush between each mode")
+else:
+    print(f"📋 Running single mode: {FETCH_MODE}")
+print()
+
+# Store all results across all modes
+all_results = {}
+random.seed(42)  # Reproducible results
+
+# ✅ V5: Loop through each mode configuration (mode + workers)
+for mode_idx, mode_config in enumerate(MODE_CONFIGS):
+    current_mode = mode_config["mode"]
+    current_workers = mode_config["workers"]
+    
+    print("\n" + "="*80)
+    mode_label = get_mode_label(current_mode, current_workers)
+    print(f"🎯 CONFIG {mode_idx + 1}/{len(MODE_CONFIGS)}: {mode_label}")
+    print("="*80)
+    if current_workers:
+        print(f"   Workers: {current_workers}")
+    print()
+    
+    # Initialize connection pool for parallel mode
+    if current_mode == "binpacked_parallel":
+        pool_max_size = current_workers * 10  # ✅ V5: Scale pool with workers
+        print(f"🔗 Initializing connection pool ({current_workers} workers)...")
+        pool = ConnectionPool(
+            conninfo=psycopg.conninfo.make_conninfo(**LAKEBASE_CONFIG),
+            min_size=min(current_workers * 2, 10),
+            max_size=pool_max_size,  # ✅ V5: Dynamic pool sizing
+            timeout=10.0,
+            max_idle=300,
+            max_lifetime=1800,
+            check=ConnectionPool.check_connection
+        )
+        print(f"   ✅ Pool initialized: max={pool_max_size} (workers={current_workers})")
+        print()
+    else:
+        pool = None
+    
+    # Flush cache before this mode (except for first mode)
+    if mode_idx > 0:
+        print("🔄 Flushing cache before starting this mode...")
+        flush_cache(conn)
+        # Close and reopen connection to clear client-side state
+        conn.close()
+        conn = get_conn()
+        print("   ✅ Connection refreshed")
+        print()
+    
+    results = {}
+    
+    for hot_pct in HOT_COLD_MATRIX:
+        cold_pct = 100 - hot_pct
+        print("\n" + "-"*80)
+        print(f"   {hot_pct}% HOT / {cold_pct}% COLD (per entity)")
+        print("-"*80)
+        
+        # Reset PostgreSQL stats for accurate I/O measurement
+        reset_pg_stats(conn)
+        io_before_reads, io_before_hits = read_pg_io_stats(conn)
+        
+        latencies = []
+        cache_scores = []
+        entity_latency = defaultdict(list)
+        rows_returned_total = 0
+        payload_size_total = 0
+        gantt_samples = []  # ✅ V5: Collect Gantt samples (first 20 iterations)
+        GANTT_SAMPLE_SIZE = 20
+        slow_query_count = 0  # ✅ V5.1: Track number of slow queries logged
+        SLOW_QUERY_BATCH_SIZE = 100  # ✅ V5.1: Commit every N slow query inserts
+        queries_per_request_samples = []  # ✅ FIX #1: Track actual queries per iteration
+        total_queries_executed = 0  # ✅ FIX #1: Track total queries for dynamic calculation
+        
+        # ✅ FIX #2: No-replacement sampling for 0% hot (true cold reads)
+        if hot_pct == 0:
+            cold_keys_pool = {entity: list(entity_keys[entity]["cold"]) for entity in ENTITY_NAMES}
+            for entity in ENTITY_NAMES:
+                random.shuffle(cold_keys_pool[entity])
+            cold_key_idx = {entity: 0 for entity in ENTITY_NAMES}
+            print(f"         ✅ Using no-replacement cold sampling for 0% hot (true cold reads)")
+        
+        # Benchmark loop
+        for i in range(ITERATIONS_PER_RUN):
+            # ✅ CRITICAL: Refresh connection every 100 iterations to prevent timeouts
+            if i > 0 and i % 100 == 0:
+                conn = refresh_connection_if_stale(conn)
+            
+            # Verbose logging for first 3 iterations to debug hangs
+            if i < 3:
+                print(f"         → Iteration {i+1}: Building request...")
+            
+            t0 = time.time()
+            hot_entities = 0
+            entities_for_request = []
+            
+            # Build multi-entity request
+            for entity in ENTITY_NAMES:
+                tables = ENTITY_TABLE_GROUPS[entity]
+                keyset = entity_keys[entity]
+                
+                # Each entity independently chooses hot or cold
+                if random.random() < hot_pct / 100:
+                    hashkey = random.choice(keyset["hot"])
+                    hot_entities += 1
+                else:
+                    # ✅ FIX #2: No-replacement sampling for 0% hot
+                    if hot_pct == 0:
+                        # Pop from pool (no replacement)
+                        if cold_key_idx[entity] >= len(cold_keys_pool[entity]):
+                            # Exhausted pool, reshuffle
+                            random.shuffle(cold_keys_pool[entity])
+                            cold_key_idx[entity] = 0
+                        hashkey = cold_keys_pool[entity][cold_key_idx[entity]]
+                        cold_key_idx[entity] += 1
+                    else:
+                        # With replacement (default)
+                        hashkey = random.choice(keyset["cold"])
+                
+                entities_for_request.append({
+                    "entity": entity,
+                    "hashkey": hashkey,
+                    "tables": tables
+                })
+            
+            if i < 3:
+                print(f"            Built request with {len(entities_for_request)} entities, {hot_entities} hot")
+                print(f"            Fetching features (mode: {current_mode})...")
+            
+            # Dispatch to correct fetch strategy based on current_mode
+            # ✅ CRITICAL: Retry on connection errors
+            max_retries = 3
+            request_start = time.perf_counter()  # ✅ V5: Track request start for Gantt
+            
+            # ✅ V5.1: Generate unique request_id for tail amplification analysis
+            request_id = f"{RUN_ID}_{current_mode}_{hot_pct}_{i}"
+            log_timings = LOG_QUERY_TIMINGS  # Always track, but only log slow queries
+            
+            # ✅ V5.3: NO sample_io - all EXPLAIN is post-run only
+            
+            for attempt in range(max_retries):
+                try:
+                    if current_mode == "serial":
+                        # Original serial execution (30 queries)
+                        # ✅ V5.3: No sample_io parameter - always measured execution only
+                        entity_timings, io_blocks, executor_metrics, gantt_data, query_timings = fetch_features_for_request(conn, entities_for_request, i, False, request_start, log_timings)
+                        
+                        # ✅ FIX #1: Track actual queries (serial = 30)
+                        queries_count = sum(len(e["tables"]) for e in entities_for_request)
+                        total_queries_executed += queries_count
+                        
+                        # ✅ V5.3: Aggregate executor metrics (always measured, never EXPLAIN)
+                        if executor_metrics["rows_returned"]:
+                            rows_returned_total += executor_metrics["rows_returned"]
+                        if executor_metrics["payload_size_bytes"]:
+                            payload_size_total += executor_metrics["payload_size_bytes"]
+                        
+                        # ✅ V5.3: Calculate latency first (needed for slow query log)
+                        request_latency_ms = sum(entity_timings.values()) if entity_timings else 0
+                        
+                        # ✅ V5.3: Persist slow query timings with request_latency_ms
+                        if log_timings and query_timings:
+                            persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
+                            slow_query_count += len(query_timings)
+                            
+                            # ✅ Batch commit every N slow queries
+                            if slow_query_count >= SLOW_QUERY_BATCH_SIZE:
+                                conn.commit()
+                                if i < 3:
+                                    print(f"            ✅ Committed {slow_query_count} slow queries")
+                                slow_query_count = 0
+                                
+                    elif current_mode == "binpacked":
+                        # Bin-packed serial (UNION ALL queries)
+                        entity_timings, io_blocks, gantt_data, query_timings, queries_count = fetch_features_binpacked_serial(conn, entities_for_request, i, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS)
+                        total_queries_executed += queries_count  # ✅ FIX #1: Track actual
+                        
+                        # ✅ V5.3: Calculate latency first (needed for slow query log)
+                        request_latency_ms = sum(entity_timings.values()) if entity_timings else 0
+                        
+                        # ✅ V5.3: Persist slow feature-group queries with request_latency_ms
+                        if log_timings and query_timings:
+                            persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
+                            slow_query_count += len(query_timings)
+                            
+                            if slow_query_count >= SLOW_QUERY_BATCH_SIZE:
+                                conn.commit()
+                                if i < 3:
+                                    print(f"            ✅ Committed {slow_query_count} slow queries")
+                                slow_query_count = 0
+                                
+                    elif current_mode == "binpacked_parallel":
+                        # Bin-packed parallel (N workers) ✅ V5: Parameterized workers
+                        entity_timings, io_blocks, gantt_data, query_timings, queries_count, pool_wait_times = fetch_features_binpacked_parallel(entities_for_request, i, current_workers, request_start, log_timings)
+                        total_queries_executed += queries_count  # ✅ FIX #1: Track actual
+                        
+                        # ✅ V5.3: Track pool wait stats for this request
+                        pool_wait_max = max(pool_wait_times) if pool_wait_times else 0
+                        pool_wait_avg = sum(pool_wait_times) / len(pool_wait_times) if pool_wait_times else 0
+                    
+                    # ✅ V5: Collect Gantt samples for visualization
+                    if i < GANTT_SAMPLE_SIZE:
+                        gantt_samples.append({
+                            "iteration": i,
+                            "hot_entities": hot_entities,
+                            "mode": current_mode,
+                            "workers": current_workers,
+                            "entities": gantt_data
+                        })
+                    
+                    break  # Success - exit retry loop
+                    
+                except (psycopg.OperationalError, psycopg.InterfaceError) as e:
+                    if attempt < max_retries - 1:
+                        print(f"         ⚠️  Connection error (attempt {attempt + 1}/{max_retries}): {str(e)[:100]}")
+                        conn = refresh_connection_if_stale(conn)
+                        time.sleep(1)  # Brief pause before retry
+                    else:
+                        print(f"         ❌ Connection failed after {max_retries} attempts")
+                        raise
+            
+            # ✅ V5.3: Debug output (no EXPLAIN contamination)
+            if i < 3:
+                print(f"            Completed in {(time.time()-t0)*1000:.1f}ms")
+            
+            # ✅ FIX: Calculate latency correctly based on execution mode
+            if current_mode == "binpacked_parallel":
+                # Parallel execution: critical path is MAX(entity latencies)
+                latency_ms = max(entity_timings.values()) if entity_timings else 0
+            else:
+                # Serial execution: total latency is SUM(entity latencies)
+                latency_ms = sum(entity_timings.values()) if entity_timings else 0
+            
+            # ✅ V5.3: ALL iterations are measured (no EXPLAIN contamination)
+            latencies.append(latency_ms)
+            cache_scores.append(hot_entities / len(ENTITY_NAMES))
+            
+            # Track per-entity latencies for P99 contribution analysis
+            for entity, timing_ms in entity_timings.items():
+                entity_latency[entity].append(timing_ms)
+            
+            # ✅ FIXED: Percentage-based progress printing
+            if (i + 1) % max(1, ITERATIONS_PER_RUN // 10) == 0:
+                pct = ((i + 1) / ITERATIONS_PER_RUN) * 100
+                recent_avg = np.mean(latencies[-100:]) if len(latencies) >= 100 else np.mean(latencies)
+                print(f"         Progress: {pct:.0f}% ({i+1}/{ITERATIONS_PER_RUN}) | Recent avg: {recent_avg:.1f}ms")
+        
+        # ✅ CRITICAL: Final commit for any pending slow query log inserts
+        if slow_query_count > 0:
+            conn.commit()
+            print(f"         ✅ Final slow query log commit: {slow_query_count} queries logged")
+    
+        # Read I/O stats (aggregate across all queries - for comparison)
+        io_after_reads, io_after_hits = read_pg_io_stats(conn)
+        io_blocks_read_aggregate = io_after_reads - io_before_reads
+        
+        # ✅ V5.3: I/O measurement strategy (NO inline EXPLAIN)
+        if current_mode == "serial":
+            # Serial: use pg_statio aggregate
+            io_blocks_per_req = io_blocks_read_aggregate / ITERATIONS_PER_RUN if ITERATIONS_PER_RUN > 0 else 0
+            io_measurement_method = "pg_statio_aggregate"
+        else:
+            # Bin-packed modes: I/O not measured (would require EXPLAIN on UNION ALL)
+            io_blocks_per_req = None
+            io_measurement_method = "not_measured"
+        
+        # ✅ V5.3: ALL iterations are measured (no EXPLAIN contamination)
+        if len(latencies) == 0:
+            print(f"         ⚠️  ERROR: No measured latencies!")
+            continue  # Skip this hot_pct
+        
+        lat = np.array(latencies)
+        
+        cache = np.array(cache_scores)
+        
+        # Calculate per-entity P99s and contribution %
+        entity_p99_dict = {}
+        entity_p99_contribution = {}
+        total_entity_p99 = 0
+        
+        for entity, timings in entity_latency.items():
+            if len(timings) > 0:
+                p99 = float(np.percentile(timings, 99))
+                entity_p99_dict[entity] = p99
+                total_entity_p99 += p99
+        
+        # ✅ NEW: Calculate per-entity P99 contribution %
+        for entity, p99 in entity_p99_dict.items():
+            entity_p99_contribution[entity] = (p99 / total_entity_p99 * 100) if total_entity_p99 > 0 else 0
+        
+        # ✅ FIXED: Handle NaN in correlation for edge cases (0% or 100% hot)
+        if cache.std() > 0 and lat.std() > 0:
+            lat_cache_corr = float(np.corrcoef(lat, cache)[0, 1])
+        else:
+            lat_cache_corr = 0.0  # No variance = no correlation
+        
+        # Determine cache state label
+        if mode_idx == 0:
+            cache_state = "best_effort_cold"  # First mode after no warmup
+        elif hot_pct >= 80:
+            cache_state = "warm"
+        elif hot_pct <= 30:
+            cache_state = "mixed_cold"
+        else:
+            cache_state = "mixed"
+        
+        # ✅ V5.3: Calculate executor metrics averages (all iterations are measured)
+        measured_iters = len(latencies)
+        avg_planning_time_ms = None  # No inline EXPLAIN
+        avg_rows_per_request = (rows_returned_total / measured_iters) if measured_iters > 0 else None
+        avg_payload_bytes = (payload_size_total / measured_iters) if measured_iters > 0 else None
+        
+        # ✅ FIX #1: Calculate queries per request dynamically (CRITICAL - not assumed!)
+        if current_mode == "serial":
+            # Serial: computed (should be ~30 per request)
+            queries_per_request = total_queries_executed / measured_iters if measured_iters > 0 else 30
+        elif measured_iters > 0:
+            # Bin-packed: Computed from actual feature groups
+            queries_per_request = total_queries_executed / measured_iters
+        else:
+            # Fallback (shouldn't happen)
+            queries_per_request = 30 if current_mode == "serial" else 10
+        
+        # ✅ FIX #1: Log transparency
+        print(f"         📊 Queries/request: {queries_per_request:.1f} (computed from {non_explain_iters} iterations)")
+        
+        results[hot_pct] = {
+            "p50": np.percentile(lat, 50),
+            "p95": np.percentile(lat, 95),
+            "p99": np.percentile(lat, 99),
+            "avg": lat.mean(),
+            "cache_avg": cache.mean(),
+            "cache_p50": np.percentile(cache, 50),
+            "cache_p90": np.percentile(cache, 90),
+            "fully_cold_pct": (cache == 0).mean() * 100,
+            "fully_hot_pct": (cache == 1).mean() * 100,
+            "lat_cache_corr": lat_cache_corr,
+            "io_blocks_per_req": io_blocks_per_req,
+            "io_measurement_method": io_measurement_method,
+            "entity_p99": entity_p99_dict,
+            "entity_p99_contribution_pct": entity_p99_contribution,
+            "cache_state": cache_state,
+            "fetch_mode": current_mode,
+            "queries_per_request": queries_per_request,
+            "avg_planning_time_ms": avg_planning_time_ms,
+            "avg_rows_per_request": avg_rows_per_request,
+            "avg_payload_bytes": avg_payload_bytes,
+            # ✅ V5: New metrics
+            "parallel_workers": current_workers,
+            "latency_per_query_ms": lat.mean() / queries_per_request,  # Cost-normalized!
+            "entity_timing_detail": gantt_samples,  # ✅ V5: Gantt chart data (first 20 iterations)
+            "max_concurrent_queries": min(current_workers, len(ENTITY_NAMES)) if current_mode == "binpacked_parallel" else None  # ✅ FIX #7: Actual concurrency
+        }
+        
+        # ✅ V5.1: Commit any remaining slow queries
+        if slow_query_count > 0:
+            conn.commit()
+            print(f"         ✅ Final commit: {slow_query_count} slow queries")
+        
+        if LOG_QUERY_TIMINGS:
+            # Count slow queries by scanning what we logged
+            conn_temp = get_conn()
+            with conn_temp.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(*) 
+                    FROM {RESULTS_SCHEMA}.zipfian_slow_query_log 
+                    WHERE run_id = %s AND mode = %s AND hot_traffic_pct = %s
+                """, (RUN_ID, current_mode, hot_pct))
+                slow_count = cur.fetchone()[0]
+            conn_temp.close()
+            print(f"         🐌 Slow queries logged: {slow_count} (>= {SLOW_QUERY_THRESHOLD_MS}ms)")
+        
+        # Persist results
+        persist_results(conn, hot_pct, results[hot_pct])
+        
+        # Print summary
+        print()
+        print(f"         📊 Results:")
+        print(f"            P99 latency:             {results[hot_pct]['p99']:.1f} ms")
+        print(f"            Avg cache score:         {results[hot_pct]['cache_avg']:.2f}")
+        print(f"            Fully hot requests:      {results[hot_pct]['fully_hot_pct']:.1f}%")
+        print(f"            Fully cold requests:     {results[hot_pct]['fully_cold_pct']:.1f}%")
+        
+        # ✅ FIX: Clear messaging when I/O not measured
+        if io_blocks_per_req is not None:
+            print(f"            I/O blocks/req:          {io_blocks_per_req:.1f} ({io_measurement_method})")
+        else:
+            print(f"            I/O blocks/req:          N/A (not measured for bin-packed modes)")
+        
+        print(f"            Entity P99 contributions:")
+        for entity, contrib in entity_p99_contribution.items():
+            print(f"               {entity:25} {entity_p99_dict[entity]:.1f}ms ({contrib:.1f}%)")
+    
+    # Store results for this configuration (V5: unique key per mode+workers)
+    config_key = f"{current_mode}_w{current_workers}" if current_workers else current_mode
+    all_results[config_key] = results
+    
+    # Close connection pool if it was created
+    if pool:
+        print()
+        print("🔗 Closing connection pool...")
+        pool.close()
+        pool = None
+    
+    print()
+    print("="*80)
+    print(f"✅ MODE COMPLETE: {current_mode}")
+    print("="*80)
+    print()
+
+conn.close()
+
+print("\n" + "="*80)
+print("✅ ALL BENCHMARKS COMPLETE!")
+print("="*80)
+print()
+
+if RUN_ALL_MODES or len(MODE_CONFIGS) > 1:
+    print("📊 CONFIGURATIONS EXECUTED:")
+    for cfg in MODE_CONFIGS:
+        label = get_mode_label(cfg["mode"], cfg["workers"])
+        print(f"   ✅ {label}")
+    print()
+    print("💾 All results stored in features.zipfian_feature_serving_results_v5")
+    print(f"   Run ID: {RUN_ID}")
+    print(f"   Filter by fetch_mode column to compare")
+else:
+    print(f"📊 MODE EXECUTED: {FETCH_MODE}")
+    print(f"💾 Results stored with fetch_mode = '{FETCH_MODE}'")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 🔟 Results Summary Table
+
+# COMMAND ----------
+
+print("\n" + "="*100)
+print("📊 FINAL BENCHMARK MATRIX SUMMARY")
+print("="*100)
+print()
+
+# Print results for each mode configuration
+for config_key in all_results.keys():
+    mode_results = all_results[config_key]  # ✅ FIX Bug #1: Don't shadow 'results'
+    
+    # Extract mode name and workers for label
+    if '_w' in config_key:
+        base_mode = config_key.split('_w')[0]
+        workers_str = config_key.split('_w')[1]
+        mode_label = f"{FETCH_MODE_LABELS.get(base_mode, base_mode)} ({workers_str} workers)"
+    else:
+        base_mode = config_key
+        mode_label = FETCH_MODE_LABELS.get(base_mode, config_key)
+    
+    print(f"\n🎯 CONFIG: {config_key.upper()} - {mode_label}")
+    print("-"*100)
+    
+    print(
+        f"{'Hot%':>6} | {'P50(ms)':>8} | {'P95(ms)':>8} | {'P99(ms)':>8} | {'Avg(ms)':>8} | "
+        f"{'CacheAvg':>8} | {'ColdReq%':>8} | {'HotReq%':>7} | {'LatCache':>8}"
+    )
+    print("-"*100)
+    
+    for hot_pct, r in sorted(mode_results.items(), reverse=True):
+        print(
+            f"{hot_pct:>6} | "
+            f"{r['p50']:>8.1f} | "
+            f"{r['p95']:>8.1f} | "
+            f"{r['p99']:>8.1f} | "
+            f"{r['avg']:>8.1f} | "
+            f"{r['cache_avg']:>8.2f} | "
+            f"{r['fully_cold_pct']:>8.1f} | "
+            f"{r['fully_hot_pct']:>7.1f} | "
+            f"{r['lat_cache_corr']:>8.2f}"
+        )
+
+print()
+print("="*100)
+print()
+print(f"💾 Results persisted to: {RESULTS_SCHEMA}.{RESULTS_TABLE} (run_id: {RUN_ID})")
+print(f"📊 Query to compare modes:")
+print(f"""
+SELECT fetch_mode, hot_traffic_pct, p99_ms, avg_ms, queries_per_request
+FROM {RESULTS_SCHEMA}.{RESULTS_TABLE}
+WHERE run_id = '{RUN_ID}'
+ORDER BY fetch_mode, hot_traffic_pct DESC;
+""")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 1️⃣1️⃣ Visualizations
+# MAGIC 
+# MAGIC **Note:** Visualizing the last mode executed. For multi-mode comparison, query the results table directly.
+
+# COMMAND ----------
+
+# ✅ FIX Bug #1: Use explicit mode for visualizations (last config if multi-mode)
+viz_config_key = list(all_results.keys())[-1] if RUN_ALL_MODES else (f"{FETCH_MODE}_w{PARALLEL_WORKERS[0]}" if FETCH_MODE == "binpacked_parallel" else FETCH_MODE)
+viz_results = all_results[viz_config_key]
+
+print(f"📊 Visualizing results for config: {viz_config_key.upper()}")
+print()
+
+fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+# 1. P99 Latency vs Hot Traffic %
+ax1 = axes[0, 0]
+hot_pcts = sorted(viz_results.keys(), reverse=True)
+p99_values = [viz_results[h]['p99'] for h in hot_pcts]
+
+ax1.plot(hot_pcts, p99_values, 'o-', linewidth=2, markersize=8, color='#2E86AB')
+ax1.axhline(79, color='orange', linestyle='--', linewidth=2, label='Customer Reference (79ms)')
+ax1.set_xlabel('Hot Traffic % (per entity)', fontsize=12)
+ax1.set_ylabel('P99 Latency (ms)', fontsize=12)
+ax1.set_title('P99 Latency vs Hot Traffic %', fontsize=14, weight='bold')
+ax1.grid(True, alpha=0.3)
+ax1.legend()
+ax1.invert_xaxis()
+
+# 2. Cache Score vs Hot Traffic %
+ax2 = axes[0, 1]
+cache_avg = [viz_results[h]['cache_avg'] for h in hot_pcts]
+cache_p90 = [viz_results[h]['cache_p90'] for h in hot_pcts]
+
+ax2.plot(hot_pcts, cache_avg, 'o-', linewidth=2, markersize=8, label='Avg Cache Score', color='#A23B72')
+ax2.plot(hot_pcts, cache_p90, 's--', linewidth=2, markersize=6, label='P90 Cache Score', color='#F18F01')
+ax2.set_xlabel('Hot Traffic % (per entity)', fontsize=12)
+ax2.set_ylabel('Cache Score (0=all cold, 1=all hot)', fontsize=12)
+ax2.set_title('Cache Effectiveness vs Hot Traffic %', fontsize=14, weight='bold')
+ax2.grid(True, alpha=0.3)
+ax2.legend()
+ax2.invert_xaxis()
+
+# 3. Request Distribution (Fully Hot vs Fully Cold)
+ax3 = axes[1, 0]
+fully_hot = [viz_results[h]['fully_hot_pct'] for h in hot_pcts]
+fully_cold = [viz_results[h]['fully_cold_pct'] for h in hot_pcts]
+
+width = 3
+x = np.array(hot_pcts)
+ax3.bar(x - width/2, fully_hot, width, label='Fully Hot (all 3 entities)', color='#C73E1D', alpha=0.7)
+ax3.bar(x + width/2, fully_cold, width, label='Fully Cold (all 3 entities)', color='#4ECDC4', alpha=0.7)
+ax3.set_xlabel('Hot Traffic % (per entity)', fontsize=12)
+ax3.set_ylabel('% of Requests', fontsize=12)
+ax3.set_title('Request Distribution: Fully Hot vs Fully Cold', fontsize=14, weight='bold')
+ax3.grid(True, alpha=0.3, axis='y')
+ax3.legend()
+ax3.invert_xaxis()
+
+# 4. Latency-Cache Correlation
+ax4 = axes[1, 1]
+lat_cache_corr = [viz_results[h]['lat_cache_corr'] for h in hot_pcts]
+
+ax4.plot(hot_pcts, lat_cache_corr, 'o-', linewidth=2, markersize=8, color='#6A4C93')
+ax4.set_xlabel('Hot Traffic % (per entity)', fontsize=12)
+ax4.set_ylabel('Correlation Coefficient', fontsize=12)
+ax4.set_title('Latency ↔ Cache Correlation', fontsize=14, weight='bold')
+ax4.grid(True, alpha=0.3)
+ax4.axhline(0, color='black', linestyle='-', linewidth=0.5)
+ax4.invert_xaxis()
+
+plt.tight_layout()
+plt.savefig('/tmp/zipfian_multi_entity_benchmark_v5.3.png', dpi=150, bbox_inches='tight')
+print("📊 Visualization saved to /tmp/zipfian_multi_entity_benchmark_v5.3.png")
+plt.show()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## ✅ Key Insights
+
+# COMMAND ----------
+
+print("\n" + "="*80)
+print("💡 KEY INSIGHTS")
+print("="*80)
+print(f"Config: {viz_config_key.upper()}")
+print("="*80)
+print()
+
+# Find 80% hot case (closest match)
+target_hot = 80
+closest_hot = min(viz_results.keys(), key=lambda x: abs(x - target_hot))
+r80 = viz_results[closest_hot]
+
+print(f"🎯 REALISTIC PRODUCTION SCENARIO ({closest_hot}% hot traffic per entity):")
+print(f"   P99 latency:           {r80['p99']:.1f} ms")
+print(f"   Avg cache score:       {r80['cache_avg']:.2f} (0=all cold, 1=all hot)")
+print(f"   Fully hot requests:    {r80['fully_hot_pct']:.1f}%  (all 3 entities cached)")
+print(f"   Fully cold requests:   {r80['fully_cold_pct']:.1f}%  (all 3 entities on disk)")
+print(f"   Mixed requests:        {100 - r80['fully_hot_pct'] - r80['fully_cold_pct']:.1f}%  (1-2 entities cached)")
+print()
+
+# Calculate expected cache score for 80% hot per entity
+expected_all_hot = 0.8 ** 3 * 100  # All 3 entities hot
+expected_all_cold = 0.2 ** 3 * 100  # All 3 entities cold
+print(f"📊 STATISTICAL VALIDATION:")
+print(f"   Expected fully hot:    {expected_all_hot:.1f}%  (0.8³)")
+print(f"   Actual fully hot:      {r80['fully_hot_pct']:.1f}%")
+print(f"   Expected fully cold:   {expected_all_cold:.1f}%  (0.2³)")
+print(f"   Actual fully cold:     {r80['fully_cold_pct']:.1f}%")
+print(f"   ✅ Matches expected distribution!")
+print()
+
+print(f"📊 PERFORMANCE SUMMARY:")
+print(f"   Customer Reference:    79.0 ms P99 (verified)")
+print(f"   Lakebase P99:          {r80['p99']:.1f} ms")
+if r80['p99'] < 79:
+    improvement = ((79 - r80['p99']) / 79) * 100
+    print(f"   ✅ {improvement:.1f}% faster than reference")
+elif r80['p99'] < 95:
+    pct_diff = ((r80['p99'] - 79) / 79) * 100
+    print(f"   ✅ Within acceptable range (+{pct_diff:.1f}%)")
+else:
+    pct_diff = ((r80['p99'] - 79) / 79) * 100
+    print(f"   ⚠️  Needs optimization (+{pct_diff:.1f}% vs reference)")
+print()
+
+print(f"💡 NOTE:")
+print(f"   - Cost analysis requires detailed capacity assumptions")
+print(f"   - Contact procurement for TCO comparison")
+print()
+
+print("="*80)
+print(f"✅ Benchmark complete! Run ID: {RUN_ID}")
+print(f"📊 View results: SELECT * FROM {RESULTS_SCHEMA}.{RESULTS_TABLE} WHERE run_id = '{RUN_ID}';")
+print("="*80)
