@@ -318,7 +318,7 @@
       overflow: hidden;
     }
     .chart-header{
-      padding: 20px 20px 16px;
+      padding: 12px 12px 8px;
       border-bottom: 1px solid var(--border);
     }
     .chart-header h3{
@@ -570,8 +570,12 @@
     .content-grid.two-col{
       grid-template-columns: 1fr 1fr;
     }
+    .content-grid.three-col{
+      grid-template-columns: repeat(3, 1fr);
+    }
     @media (max-width: 900px){
       .content-grid.two-col{ grid-template-columns: 1fr; }
+      .content-grid.three-col{ grid-template-columns: 1fr; }
     }
     
     .content-card{
@@ -669,10 +673,9 @@
       background: var(--surface-2);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 20px;
+      padding: 12px;
       margin-top: 24px;
       transition: all 0.3s ease;
-      min-height: 500px;
       display: flex;
       flex-direction: column;
     }
@@ -685,7 +688,7 @@
       font-size: 14px;
       font-weight: 700;
       color: var(--text);
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       /* Clamp long titles to 2 lines for consistent layout */
       display: -webkit-box;
       -webkit-line-clamp: 2;
@@ -706,16 +709,13 @@
     /* Guarantee consistent chart image area regardless of title/note wrapping */
     .chart-content{
       flex: 1;
-      min-height: 360px;
       display: flex;
       align-items: center;
       justify-content: center;
     }
     .chart-embed{
       width: 100%;
-      max-height: 100%;
       height: auto;
-      object-fit: contain;
       border-radius: 8px;
     }
     
@@ -762,7 +762,7 @@
     .chart-caption{
       font-size: 13px;
       color: var(--muted);
-      margin-top: 12px;
+      margin-top: 8px;
       line-height: 1.5;
     }
     
@@ -818,7 +818,7 @@
       background: rgba(0,255,136,.1);
       border: 1px solid rgba(0,255,136,.3);
       border-radius: var(--radius-sm);
-      padding: 20px;
+      padding: 14px 16px;
       margin-top: 24px;
     }
     .insight-title{
@@ -840,7 +840,7 @@
       border: 1px solid rgba(255,208,0,.3);
       border-left: 4px solid var(--warn);
       border-radius: var(--radius-sm);
-      padding: 20px;
+      padding: 14px 16px;
       margin: 20px 0;
     }
     .math-title{
@@ -998,7 +998,7 @@
       background: linear-gradient(135deg, rgba(124,58,237,.1) 0%, rgba(0,212,255,.05) 100%);
       border: 1px solid rgba(124,58,237,.4);
       border-radius: var(--radius-sm);
-      padding: 20px 24px;
+      padding: 14px 16px;
       margin: 20px 0;
       box-shadow: 0 0 20px rgba(124,58,237,.15);
     }
@@ -1038,6 +1038,67 @@
       font-family: var(--sans);
     }
     .math-note b{
+      color: var(--brand-2);
+      font-weight: 700;
+    }
+    
+    /* Compact Callout Box Styles (for Tab 2 LHS) */
+    .callout-box {
+      background: linear-gradient(135deg, rgba(124,58,237,.1) 0%, rgba(0,212,255,.05) 100%);
+      border: 1px solid rgba(124,58,237,.4);
+      border-radius: var(--radius-sm);
+      padding: 16px 18px;
+      margin: 12px 0;
+      box-shadow: 0 0 20px rgba(124,58,237,.15);
+    }
+    .callout-box--purple {
+      background: linear-gradient(135deg, rgba(124,58,237,.12) 0%, rgba(0,212,255,.06) 100%);
+      border: 1px solid rgba(124,58,237,.5);
+    }
+    .callout-box__title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--brand);
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .callout-lead {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    .callout-box--purple .callout-lead {
+      margin-bottom: 8px;
+      opacity: 0.9;
+    }
+    .math-panel {
+      background: rgba(0,0,0,.35);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 8px 0 0 0;
+    }
+    .math-panel pre {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--brand-3);
+    }
+    .math-panel code {
+      font-family: var(--mono);
+      color: var(--brand-3);
+    }
+    .callout-interpretation {
+      margin-top: 10px;
+      font-size: 13px;
+      opacity: 0.75;
+      color: var(--muted);
+      line-height: 1.7;
+      padding-left: 2px;
+    }
+    .callout-interpretation b {
       color: var(--brand-2);
       font-weight: 700;
     }
@@ -1165,6 +1226,142 @@
       color: var(--text);
       font-weight: 600;
     }
+    
+    /* Appendix tab styles */
+    .code-frame{
+      margin: 24px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .code-title{
+      padding: 12px 20px;
+      background: var(--surface-2);
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .code-block{
+      margin: 0;
+      padding: 20px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text);
+      background: var(--surface);
+      overflow-x: auto;
+    }
+    .code-caption{
+      padding: 12px 20px;
+      font-size: 13px;
+      color: var(--muted);
+      background: var(--surface-2);
+      border-top: 1px solid var(--border);
+    }
+    
+    .metric-grid{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .metric-box{
+      padding: 20px;
+      background: var(--surface-2);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      text-align: center;
+    }
+    .metric-label{
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+    .metric-value{
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .metric-note{
+      font-size: 13px;
+      color: var(--muted-2);
+    }
+    
+    .checklist-grid{
+      display: grid;
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .checklist-item{
+      display: flex;
+      gap: 16px;
+      padding: 20px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      align-items: flex-start;
+    }
+    .checklist-icon{
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--ok);
+      color: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .checklist-content{
+      flex: 1;
+    }
+    .checklist-title{
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+    .checklist-text{
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    
+    .reference-links{
+      display: grid;
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .reference-item{
+      padding: 20px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .reference-title{
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    .reference-path{
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--brand-2);
+      margin-bottom: 6px;
+    }
+    .reference-desc{
+      font-size: 13px;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -1229,16 +1426,8 @@
       <div class="tab" onclick="switchTab('binpacking-efficiency', this)">Bin-packing</div>
       <div class="tab" onclick="switchTab('parallelism-diminishing-returns', this)">Parallelism</div>
       <div class="tab" onclick="switchTab('overlap-gantt', this)">Gantt View</div>
-      <div class="tab" onclick="switchTab('tail-amplification', this)">Tail Risk</div>
       <div class="tab" onclick="switchTab('recommendations-next-steps', this)">Recommendations</div>
-      <div class="tab" onclick="switchTab('overview', this)">Overview</div>
-      <div class="tab" onclick="switchTab('request-model', this)">Request model</div>
-      <div class="tab" onclick="switchTab('key-sampling', this)">Key sampling</div>
-      <div class="tab" onclick="switchTab('execution-modes', this)">Execution modes</div>
-      <div class="tab" onclick="switchTab('timing', this)">Timing & logging</div>
-      <div class="tab" onclick="switchTab('io', this)">I/O measurement</div>
-      <div class="tab" onclick="switchTab('results', this)">Results</div>
-      <div class="tab" onclick="switchTab('charts', this)">Charts</div>
+      <div class="tab" onclick="switchTab('appendix', this)">Appendix</div>
     </div>
 
     <!-- Tab: Executive Summary -->
@@ -1495,146 +1684,170 @@
 
 
     <!-- Tab: Workload Reality -->
+    <!-- Tab: Workload Reality -->
     <div id="tab-workload-reality" class="tab-content">
+      <!-- Hero -->
       <div class="card">
-        <p class="eyebrow">Workload Reality</p>
-        <h2 class="section-title">Why this workload is hard (and why production serving is challenging)</h2>
+        <h2 class="section-title">Why this workload is hard</h2>
         <p class="section-subtitle">
-          This is not a "single query latency test." This is a <b>request fan-out benchmark</b>.
-          If one request requires dozens of small lookups, your tail latency is dominated by the slowest components.
+          This is not a "single query latency test." It's a <b>request fan-out</b> test: one request triggers dozens of tiny
+          lookups, and the <b>slowest lookup sets the tail</b>.
         </p>
       </div>
 
-      <div class="content-grid two-col">
-        <div class="content-card">
-          <h3 class="card-title">Request structure: high fan-out feature serving</h3>
-          <p class="card-body">
-            A single serving request fetches features for multiple entities (ex: card fingerprint, email, cardholder name).
-            Each entity then expands across multiple feature families and time windows.
+      <!-- Tight "what matters" strip -->
+      <div class="content-grid three-col" style="margin-top: 8px; margin-bottom: 8px;">
+        <div class="content-card" style="padding: 14px 16px;">
+          <h3 class="card-title" style="margin-bottom: 4px; font-size: 14px;">1) Fan-out is the unit of pain</h3>
+          <p class="card-body" style="margin-bottom: 0; font-size: 13px; line-height: 1.5;">
+            Each request expands into <b>3 entities</b> and ~<b>30 table lookups</b>. Even "fast" lookups compound into slow requests when executed serially.
           </p>
-
-          <div class="diagram-frame">
-            <div class="diagram-title">Fan-out structure</div>
-            <div class="diagram-placeholder" id="diagram_fanout">
-              <div class="placeholder-inner">
-                <div class="placeholder-badge">Visual Reference</div>
-                <p style="font-size: 16px; margin-top: 12px;"><b>Request</b> → 3 entities → 30 table lookups</p>
-                <p style="opacity:0.8; margin-top: 8px; font-size: 14px;">
-                  (card_fingerprint: 9 tables | customer_email: 9 tables | cardholder_name: 12 tables)
-                </p>
-              </div>
-            </div>
-
-            <div class="chart-caption">
-              <b>Key point:</b> even if each lookup is "fast," doing 30 of them <i>serially</i> creates a new failure mode:
-              request-level tail amplification. See the Request Model tab for the detailed SVG diagram.
-            </div>
-          </div>
-
-          <div class="insight-box">
-            <div class="insight-title">The problem is not throughput</div>
-            <div class="insight-body">
-              You can have plenty of compute. If your request requires dozens of I/O-dependent lookups,
-              the <b>P99 becomes the product of small probabilities</b> compounding across fan-out.
-            </div>
-          </div>
         </div>
 
-        <div class="content-card">
-          <h3 class="card-title">Tail amplification: why "rare" slow queries dominate</h3>
-          <p class="card-body">
-            Suppose each lookup has a small probability of being "slow" (disk, cache miss, contention).
-            Even if that probability is low, the probability that <b>at least one lookup is slow</b> becomes high
-            when you do many lookups per request.
+        <div class="content-card" style="padding: 14px 16px;">
+          <h3 class="card-title" style="margin-bottom: 4px; font-size: 14px;">2) Tail amplification is math</h3>
+          <p class="card-body" style="margin-bottom: 0; font-size: 13px; line-height: 1.5;">
+            If each lookup has a small chance of being slow, the chance that <b>at least one</b> is slow becomes large at N≈30. That's why we care about <b>P99</b>.
           </p>
+        </div>
 
-          <div class="math-callout">
-            <div class="math-title">Amplification intuition</div>
+        <div class="content-card" style="padding: 14px 16px;">
+          <h3 class="card-title" style="margin-bottom: 4px; font-size: 14px;">3) Cold reads dominate serving</h3>
+          <p class="card-body" style="margin-bottom: 0; font-size: 13px; line-height: 1.5;">
+            Real-time fraud/payment decisions skew "cold" (unique keys), increasing cache-miss probability and making fan-out tails more frequent.
+          </p>
+        </div>
+      </div>
+
+      <!-- Main story row (diagram + math) -->
+      <div class="content-grid two-col" style="margin-top: 8px;">
+        <!-- Fan-out diagram -->
+        <div class="content-card chart-card">
+          <div class="chart-header">
+            <h3>Request structure: a single request fans out</h3>
+            <p>3 entities → multiple feature families × time windows → ~30 lookups</p>
+          </div>
+
+          <div class="math-callout" style="margin-top: 10px;">
+            <div class="math-title">Fan-out cost model</div>
             <div class="math-body">
-              <p>
-                If each query has probability <code>p</code> of being slow and a request does <code>N</code> lookups:
+              <p style="margin: 0 0 10px;">
+                Request latency depends on how many point reads compose a request.
               </p>
-              <pre class="code-block"><code>P(at least one slow) = 1 - (1 - p)^N</code></pre>
-              <p style="margin:0.4rem 0 0;">
-                For fan-out workloads, even small <code>p</code> becomes painful when <code>N ≈ 30–50</code>.
-              </p>
-              <p style="margin-top: 12px; font-size: 13px;">
-                <b>Example:</b> If each query has 5% chance of being slow, with 30 queries per request:
-                <br>P(≥1 slow) = 1 - 0.95³⁰ = <strong style="color: var(--warn);">78.5%</strong> of requests will have ≥1 slow query!
+              <pre class="code-block" style="margin: 0 0 10px;"><code>Serial:   L_req ≈ Σ L_lookup      (fan-out accumulates)
+Parallel: L_req ≈ max(L_entity)  (critical path dominates)</code></pre>
+              <p style="margin: 0; font-size: 13px; opacity: 0.9;">
+                With <b>N≈30</b>, variance inflates P99 → <b>bin-packing</b> (↓N) + <b>parallelism</b>.
               </p>
             </div>
           </div>
 
-          <div class="chart-frame">
-            <div class="chart-title">Tail amplification visual</div>
-            <div class="chart-placeholder" id="chart_tail_amplification">
-              <div class="placeholder-inner">
-                <div class="placeholder-badge">Chart placeholder</div>
-                <p><b>Recommended chart:</b> "Probability ≥ 1 slow lookup" vs per-query slow rate</p>
-                <p style="margin-top: 12px; font-size: 13px; opacity: 0.8;">
-                  Plot: P(≥1 slow) = 1 - (1-p)^30 for p = 1%, 2%, 5%, 10%
-                </p>
-              </div>
-            </div>
+          <div class="chart-frame" style="margin-top: 12px;">
+            <div class="chart-title">Lookup fan-out breakdown (what "30 lookups" actually means)</div>
+            <img src="data:image/png;base64,{{CHART_FANOUT_BREAKDOWN_BASE64}}" alt="Lookup fan-out breakdown" class="chart-embed" />
             <div class="chart-caption">
-              <b>Interpretation:</b> fan-out turns small tail risks into frequent request spikes.
-              This is why we focus on P99 and why "average latency" is not enough.
+              <b>Takeaway:</b> this workload punishes fan-out, not throughput. You can have spare CPU and still miss the SLO if
+              request-level tails grow under cold reads.
             </div>
           </div>
 
-          <div class="quote-block">
-            <p class="quote">
-              "Fan-out punishes tail latency more than it rewards throughput."
-            </p>
-            <p class="quote-sub">
-              The only winning strategies are reducing query count (bin-packing) and shrinking the critical path (parallelism).
-            </p>
+          <div class="quote-block" style="margin-top: 12px;">
+            <p class="quote">"In fan-out workloads, databases feel fast but requests don't."</p>
+            <p class="quote-sub">Looking at single-query latency can be misleading: request latency is the composition of many tiny operations, and the tail is dominated by the slowest components.</p>
+          </div>
+        </div>
+
+        <!-- Tail amplification math + visual -->
+        <div class="content-card chart-card">
+          <div class="chart-header">
+            <h3>Tail amplification: why "rare" slow lookups dominate</h3>
+            <p>Small per-lookup tail risk turns into frequent request spikes at N≈30</p>
+          </div>
+
+          <div class="math-callout" style="margin-top: 6px;">
+            <div class="math-title">Intuition</div>
+            <div class="math-body">
+              <p style="margin: 0 0 8px;">
+                If each lookup has probability <code>p</code> of being slow and a request performs <code>N</code> lookups:
+              </p>
+              <pre class="code-block" style="margin: 0 0 8px;"><code>P(≥1 slow) = 1 - (1 - p)^N</code></pre>
+              <p style="margin: 0 0 10px; font-size: 13px; opacity: 0.9;">
+                Example: <code>p=5%</code>, <code>N=30</code> → <b>78.5%</b> of requests have ≥1 slow lookup.
+              </p>
+              <p style="margin: 0; font-size: 14px; font-style: italic; opacity: 0.95; padding-top: 10px; border-top: 1px solid rgba(124,58,237,.2);">
+                "In fan-out workloads, P99 is as much a probability metric as a performance metric."
+              </p>
+            </div>
+          </div>
+
+          <div class="chart-frame" style="margin-top: 8px;">
+            <div class="chart-title">Tail amplification curve</div>
+            <img src="data:image/png;base64,{{CHART_AMPLIFICATION_CURVE_BASE64}}" alt="Tail amplification curve" class="chart-embed" />
+            <div class="chart-caption">
+              <b>Takeaway:</b> Small improvements in per-lookup tail rate (p) produce large wins at request level.
+              This motivates <b>bin-packing</b> (↓N) + <b>parallelism</b> (↓critical path).
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="content-card">
-        <h3 class="card-title">Why cold reads make this worse (Checkout.com context)</h3>
-        <p class="card-body">
-          For payment transactions, most reads are <strong>cold</strong> (unique customer/card/merchant combos).
-          This means every lookup has a higher base probability of missing cache and hitting disk.
-        </p>
-        
-        <div class="grid">
-          <div class="card" style="margin: 0; background: var(--surface-2);">
-            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--brand-2);">Hot-key workloads (not realistic here)</h4>
-            <p style="font-size: 14px; color: var(--muted);">
-              If 80% of queries hit cache, tail amplification is mitigated.
-              Most requests will be fast, with occasional slow outliers.
-            </p>
+      <!-- Cold reads row (tight + visual) -->
+      <div class="content-grid two-col" style="margin-top: 8px;">
+        <div class="content-card">
+          <h3 class="card-title">Why cold reads make this worse</h3>
+          <p class="card-body">
+            Serving traffic often has weak locality: many requests touch "new" keys. That raises cache-miss probability and
+            increases the frequency of request-level tail events.
+          </p>
+
+          <div class="grid" style="margin-top: 12px;">
+            <div class="card" style="margin: 0; background: var(--surface-2);">
+              <h4 style="font-size: 15px; margin-bottom: 8px; color: var(--brand-2);">Hot-key dominated (best case)</h4>
+              <p style="font-size: 14px; color: var(--muted); margin: 0;">
+                Many lookups hit cache → fewer tail events → fan-out is survivable.
+              </p>
+            </div>
+
+            <div class="card" style="margin: 0; background: var(--surface-2);">
+              <h4 style="font-size: 15px; margin-bottom: 8px; color: var(--warn);">Cold-read dominated (realistic)</h4>
+              <p style="font-size: 14px; color: var(--muted); margin: 0;">
+                Many lookups miss cache → tails become common → request P99 inflates quickly.
+              </p>
+            </div>
           </div>
-          
-          <div class="card" style="margin: 0; background: var(--surface-2);">
-            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--warn);">Cold-read workloads (Checkout.com reality)</h4>
-            <p style="font-size: 14px; color: var(--muted);">
-              If 80-100% of queries miss cache, <strong>every request is slow</strong>.
-              Fan-out + cold reads = guaranteed tail amplification.
-            </p>
+
+          <div class="callout" style="margin-top: 12px; max-width: 100%;">
+            <strong>Implication:</strong> validating performance at <b>0–20% hot</b> is essential for deployment confidence,
+            not just at "mostly warm" cache conditions.
           </div>
         </div>
-        
-        <div class="callout" style="margin-top: 20px; max-width: 100%;">
-          <strong>This is why we focus on 0-20% hot scenarios:</strong> 
-          Payment transactions are inherently cold-read dominant. Understanding performance in this regime
-          is critical for production deployment confidence.
+
+        <div class="content-card chart-card">
+          <div class="chart-header">
+            <h3>"How often is a request fully cold?"</h3>
+            <p>A request is only as fast as its coldest entity</p>
+          </div>
+
+          <div class="chart-frame" style="margin-top: 6px;">
+            <div class="chart-title">Expected request mix (0/1/2/3 hot entities) across hot%</div>
+            <img src="data:image/png;base64,{{CHART_REQUEST_MIX_BASE64}}" alt="Request mix distribution" class="chart-embed" />
+            <div class="chart-caption">
+              <b>Takeaway:</b> how frequently the request must pay the cold path cost (disk + latency variance),
+              which is the main driver of SLO risk in production serving.
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="takeaway-banner">
-        <div class="takeaway-title">Tab takeaway</div>
+      <!-- Bottom: bridge to next tabs -->
+      <div class="takeaway-banner" style="margin-bottom: 0;">
+        <div class="takeaway-title">Key takeaway</div>
         <div class="takeaway-body">
-          This benchmark is designed to expose the real serving bottleneck:
-          <b>request-level tail amplification under fan-out with cold reads</b>.
-          In the next sections we show how Zipfian hot/cold traffic and measurement design make the results defensible.
+          The benchmark is built around a realistic request shape (fan-out) and a realistic access pattern (cold-read heavy).
+          Next, we show how the benchmark design makes this credible (Benchmark Design), then quantify P99 vs hot% (Results - Latency).
         </div>
       </div>
     </div>
-
     <!-- Tab: Benchmark Design -->
     <div id="tab-benchmark-design" class="tab-content">
       <div class="card">
@@ -1831,7 +2044,7 @@ row = cur.fetchone()</code></pre>
         </div>
       </div>
 
-      <div class="takeaway-banner">
+      <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Tab takeaway</div>
         <div class="takeaway-body">
           The benchmark is built to be <b>hard to game</b> and easy to defend:
@@ -1948,7 +2161,7 @@ row = cur.fetchone()</code></pre>
         </div>
       </div>
 
-      <div class="takeaway-banner">
+      <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Tab takeaway</div>
         <div class="takeaway-body">
           P99 vs hot% is the headline chart. It shows whether Lakebase stays stable when cache effectiveness declines —
@@ -2073,7 +2286,7 @@ row = cur.fetchone()</code></pre>
         </div>
       </div>
 
-      <div class="takeaway-banner">
+      <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Tab takeaway</div>
         <div class="takeaway-body">
           P99 is dominated by a specific part of the request. Once you know which entity (and optionally which table family)
@@ -2189,7 +2402,7 @@ cur.execute(sql, [hashkey] * len(group_tables))</code></pre>
         </div>
       </div>
 
-      <div class="takeaway-banner">
+      <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Tab takeaway</div>
         <div class="takeaway-body">
           Bin-packing is a structural win: it reduces query count, improves cost-normalized efficiency,
@@ -2334,7 +2547,7 @@ request_latency_ms = max(entity_timings.values())</code></pre>
         </div>
       </div>
 
-      <div class="takeaway-banner">
+      <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Tab takeaway</div>
         <div class="takeaway-body">
           Parallelism helps early, then plateaus. The plateau is valuable: it identifies whether your next step is
@@ -2453,7 +2666,7 @@ gantt_data.append({
         </div>
       </div>
 
-      <div class="takeaway-banner">
+      <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Tab takeaway</div>
         <div class="takeaway-body">
           The Gantt view makes the benchmark mechanics undeniable: serial stacks latency, parallel overlaps it,
@@ -2597,7 +2810,7 @@ persist_query_timings(
         </div>
       </div>
 
-      <div class="takeaway-banner">
+      <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Tab takeaway</div>
         <div class="takeaway-body">
           We don't just report P99 — we explain it. The slow-query log quantifies tail events and shows how bin-packing and
@@ -2749,7 +2962,7 @@ persist_query_timings(
         </div>
       </div>
 
-      <div class="takeaway-banner">
+      <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Final takeaway</div>
         <div class="takeaway-body">
           We now have a defensible methodology and a clear optimization roadmap. The benchmark doesn't just measure latency —
@@ -3701,6 +3914,399 @@ WHERE run_id = '{{RUN_ID}}';</code></pre>
 </div>
 
         <img src="data:image/png;base64,{{CHART_IO_BASE64}}" alt="IO" class="chart-embed" />
+      </div>
+    </div>
+
+    <!-- Tab: Appendix (Engineering Methodology) -->
+    <div id="tab-appendix" class="tab-content">
+      <div class="card">
+        <p class="eyebrow">Appendix: Engineering Methodology</p>
+        <h2 class="section-title">How the benchmark works (for internal engineers)</h2>
+        <p class="section-subtitle">
+          This appendix explains <b>what the code actually does</b>, with snippets and implementation details.
+          Goal: defensible, reproducible, production-realistic latency measurement.
+        </p>
+      </div>
+
+      <!-- Section 1: Request Construction -->
+      <div class="content-card">
+        <h3 class="card-title">1) Request shape: Multi-entity fan-out</h3>
+        <p class="card-body">
+          One "feature request" fetches <b>3 entities</b> (card_fingerprint, customer_email, cardholder_name), 
+          each expanding to 9-12 feature tables. Serial baseline = <b>30 queries per request</b>.
+        </p>
+
+        <div class="code-frame">
+          <div class="code-title">Core request builder (serial mode)</div>
+          <pre class="code-block"><code class="language-python"># Build multi-entity request (independent hot/cold per entity)
+for entity in ENTITY_NAMES:
+    tables = ENTITY_TABLE_GROUPS[entity]
+    keyset = entity_keys[entity]
+    
+    # Independently sample hot vs cold per entity
+    if random.random() &lt; hot_pct / 100:
+        hashkey = random.choice(keyset["hot"])
+        hot_entities += 1
+    else:
+        hashkey = random.choice(keyset["cold"])
+    
+    entities_for_request.append({
+        "entity": entity,
+        "hashkey": hashkey,
+        "tables": tables
+    })</code></pre>
+          <div class="code-caption">
+            <b>Why this matters:</b> Each entity has independent cache state. At 80% hot per entity, 
+            only 51% of requests are "fully hot" (0.8³). Mixed states dominate real traffic.
+          </div>
+        </div>
+
+        <div class="metric-grid">
+          <div class="metric-box">
+            <div class="metric-label">Serial mode</div>
+            <div class="metric-value">30 queries</div>
+            <div class="metric-note">1 SELECT per table</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Binpacked mode</div>
+            <div class="metric-value">10 queries</div>
+            <div class="metric-note">UNION ALL per feature family</div>
+          </div>
+          <div class="metric-box">
+            <div class="metric-label">Parallel mode</div>
+            <div class="metric-value">10 queries</div>
+            <div class="metric-note">Concurrent via ThreadPoolExecutor</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: Key Sampling -->
+      <div class="content-card">
+        <h3 class="card-title">2) Key sampling: Reproducible hot/cold sets</h3>
+        <p class="card-body">
+          Keys are sampled from <b>all tables per entity</b>, deduped, shuffled, then split 99:1 (hot:cold).
+          Saved to <code>zipfian_keys_per_run</code> for run-to-run consistency.
+        </p>
+
+        <div class="code-frame">
+          <div class="code-title">Sampling strategy (TABLESAMPLE + fallback)</div>
+          <pre class="code-block"><code class="language-python">def fetch_sample_keys(conn, table, limit):
+    # Fast path: TABLESAMPLE SYSTEM (probabilistic)
+    cur.execute(f"""
+        SELECT DISTINCT hash_key
+        FROM {SCHEMA}.{table}
+        TABLESAMPLE SYSTEM (1)
+        LIMIT %s
+    """, (limit,))
+    keys = [r[0] for r in cur.fetchall()]
+    
+    # Fallback if under-sampled
+    if len(keys) &lt; limit * 0.8:
+        cur.execute(f"""
+            SELECT DISTINCT hash_key
+            FROM {SCHEMA}.{table}
+            ORDER BY RANDOM()
+            LIMIT %s
+        """, (limit,))
+        keys = [r[0] for r in cur.fetchall()]
+    return keys
+
+# Sample across ALL tables, dedupe, shuffle, split
+keys_set = set()
+for table in entity_tables:
+    keys_set.update(fetch_sample_keys(conn, table, 5000))
+
+keys = list(keys_set)
+random.shuffle(keys)
+
+hot_count = int(len(keys) * 0.99)
+hot_keys = keys[:hot_count]
+cold_keys = keys[hot_count:]</code></pre>
+          <div class="code-caption">
+            <b>Realism fix:</b> At 0% hot, use <i>no-replacement</i> sampling from cold set to force true cache misses.
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Execution Modes -->
+      <div class="content-card">
+        <h3 class="card-title">3) Execution modes: Serial → Binpacked → Parallel</h3>
+        <p class="card-body">
+          Three strategies with <b>identical request shape and keys</b>. Only query structure and execution pattern change.
+        </p>
+
+        <div class="grid">
+          <div class="card" style="margin: 0; background: var(--surface-2);">
+            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--muted-2);">Serial (baseline)</h4>
+            <div class="code-frame" style="margin: 12px 0;">
+              <pre class="code-block" style="font-size: 12px; padding: 12px;"><code>for entity in entities:
+    for table in entity["tables"]:
+        SELECT * FROM {table}
+        WHERE hash_key = %s</code></pre>
+            </div>
+            <p style="font-size: 13px; color: var(--muted); margin: 8px 0 0;">
+              30 queries, sequential. Latency = Σ(query times).
+            </p>
+          </div>
+
+          <div class="card" style="margin: 0; background: var(--surface-2);">
+            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--brand-2);">Binpacked</h4>
+            <div class="code-frame" style="margin: 12px 0;">
+              <pre class="code-block" style="font-size: 12px; padding: 12px;"><code>for entity in entities:
+    for feature_family in families:
+        SELECT * FROM table1
+        WHERE hash_key = %s
+        UNION ALL
+        SELECT * FROM table2
+        WHERE hash_key = %s</code></pre>
+            </div>
+            <p style="font-size: 13px; color: var(--muted); margin: 8px 0 0;">
+              10 queries (UNION ALL). Reduces fan-out by 3×.
+            </p>
+          </div>
+
+          <div class="card" style="margin: 0; background: var(--surface-2);">
+            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--ok);">Parallel</h4>
+            <div class="code-frame" style="margin: 12px 0;">
+              <pre class="code-block" style="font-size: 12px; padding: 12px;"><code>with ThreadPoolExecutor(w=3) as pool:
+    futures = []
+    for entity in entities:
+        future = pool.submit(
+            fetch_entity_binpacked,
+            entity
+        )
+        futures.append(future)
+    results = [f.result() for f in futures]</code></pre>
+            </div>
+            <p style="font-size: 13px; color: var(--muted); margin: 8px 0 0;">
+              10 queries, concurrent. Latency = max(entity times) + pool overhead.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 4: Timing & Observability -->
+      <div class="content-card">
+        <h3 class="card-title">4) Timing measurement: Per-entity + Gantt-ready</h3>
+        <p class="card-body">
+          We capture <b>start/end timestamps per entity</b> to enable Gantt visualization and diagnose parallel overlap.
+        </p>
+
+        <div class="code-frame">
+          <div class="code-title">Timing capture (parallel mode example)</div>
+          <pre class="code-block"><code class="language-python">entity_timing_detail = []
+
+for iteration in range(iterations):
+    entities_for_request = build_request(entity_keys, hot_pct)
+    
+    iteration_detail = {
+        "iteration": iteration,
+        "entities": []
+    }
+    
+    with ThreadPoolExecutor(max_workers=parallel_workers) as pool:
+        futures = {}
+        for entity_data in entities_for_request:
+            start_time = time.perf_counter()
+            future = pool.submit(fetch_entity_binpacked, conn, entity_data)
+            futures[future] = (entity_data["entity"], start_time)
+        
+        for future in as_completed(futures):
+            entity_name, start_ms = futures[future]
+            end_ms = (time.perf_counter() - request_start) * 1000
+            
+            iteration_detail["entities"].append({
+                "entity": entity_name,
+                "start_ms": start_ms,
+                "end_ms": end_ms
+            })
+    
+    entity_timing_detail.append(iteration_detail)</code></pre>
+          <div class="code-caption">
+            <b>Stored as JSON:</b> Enables post-run Gantt chart generation showing entity overlap.
+          </div>
+        </div>
+
+        <div class="callout" style="margin-top: 20px;">
+          <strong>Slow query logging:</strong> Queries >40ms are logged to <code>zipfian_slow_query_log</code>
+          with request_id tracing. Post-run EXPLAIN available for diagnosis.
+        </div>
+      </div>
+
+      <!-- Section 5: I/O Measurement -->
+      <div class="content-card">
+        <h3 class="card-title">5) I/O measurement: Buffer hits vs disk reads</h3>
+        <p class="card-body">
+          For serial mode, we use <code>pg_statio_user_tables</code> as an aggregate signal of buffer hits vs reads.
+        </p>
+
+        <div class="code-frame">
+          <div class="code-title">I/O delta calculation</div>
+          <pre class="code-block"><code class="language-sql">-- Capture baseline I/O stats
+SELECT 
+    relname,
+    heap_blks_read,
+    heap_blks_hit
+FROM pg_statio_user_tables
+WHERE schemaname = 'features';
+
+-- Run benchmark iterations...
+
+-- Capture final I/O stats, compute delta
+SELECT 
+    SUM(heap_blks_read_after - heap_blks_read_before) AS total_blocks_read,
+    SUM(heap_blks_hit_after - heap_blks_hit_before) AS total_blocks_hit
+FROM io_stats_delta;</code></pre>
+          <div class="code-caption">
+            <b>Caveat:</b> I/O measurement is aggregate (not per-request). Used as directional signal for cache behavior.
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 6: Results Storage -->
+      <div class="content-card">
+        <h3 class="card-title">6) Results tables: What gets saved</h3>
+        <p class="card-body">
+          All metrics are persisted to enable cross-run comparison and post-hoc analysis.
+        </p>
+
+        <div class="table-responsive">
+          <table class="results-table">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Purpose</th>
+                <th>Key columns</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>zipfian_feature_serving_results_v5</code></td>
+                <td>Main results (one row per mode × hot%)</td>
+                <td>run_id, fetch_mode, hot_traffic_pct, p99_ms, entity_p99_ms (JSON)</td>
+              </tr>
+              <tr>
+                <td><code>zipfian_keys_per_run</code></td>
+                <td>Persisted hot/cold key sets per entity</td>
+                <td>run_id, entity, hot_keys (JSON), cold_keys (JSON)</td>
+              </tr>
+              <tr>
+                <td><code>zipfian_slow_query_log</code></td>
+                <td>Queries exceeding threshold (>40ms)</td>
+                <td>run_id, request_id, table_name, query_latency_ms</td>
+              </tr>
+              <tr>
+                <td><code>zipfian_explain_cache</code></td>
+                <td>Post-run EXPLAIN results (optional)</td>
+                <td>run_id, table_name, query_hash, explain_json</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="code-frame" style="margin-top: 20px;">
+          <div class="code-title">Query recent runs</div>
+          <pre class="code-block"><code class="language-sql">-- Compare P99 across modes at 50% hot
+SELECT 
+    run_id,
+    fetch_mode,
+    parallel_workers,
+    p99_ms,
+    avg_cache_score
+FROM features.zipfian_feature_serving_results_v5
+WHERE hot_traffic_pct = 50
+ORDER BY run_ts DESC, fetch_mode, parallel_workers;</code></pre>
+        </div>
+      </div>
+
+      <!-- Section 7: Defensibility Checklist -->
+      <div class="content-card">
+        <h3 class="card-title">7) Defensibility checklist</h3>
+        <p class="card-body">
+          What makes this benchmark credible for production evaluation?
+        </p>
+
+        <div class="checklist-grid">
+          <div class="checklist-item">
+            <div class="checklist-icon">✓</div>
+            <div class="checklist-content">
+              <div class="checklist-title">Real payload fetch</div>
+              <div class="checklist-text">Uses <code>SELECT *</code> to include heap fetch + row materialization cost (not just index lookups)</div>
+            </div>
+          </div>
+
+          <div class="checklist-item">
+            <div class="checklist-icon">✓</div>
+            <div class="checklist-content">
+              <div class="checklist-title">Production key distribution</div>
+              <div class="checklist-text">Keys sampled across ALL tables (not cherry-picked hot keys). Zipfian 99:1 split matches observed skew.</div>
+            </div>
+          </div>
+
+          <div class="checklist-item">
+            <div class="checklist-icon">✓</div>
+            <div class="checklist-content">
+              <div class="checklist-title">Independent entity cache state</div>
+              <div class="checklist-text">Each entity samples hot/cold independently, creating realistic mixed cache scenarios.</div>
+            </div>
+          </div>
+
+          <div class="checklist-item">
+            <div class="checklist-icon">✓</div>
+            <div class="checklist-content">
+              <div class="checklist-title">Connection reuse + keepalive</div>
+              <div class="checklist-text">Persistent connections with schema refresh to avoid connection overhead in measurements.</div>
+            </div>
+          </div>
+
+          <div class="checklist-item">
+            <div class="checklist-icon">✓</div>
+            <div class="checklist-content">
+              <div class="checklist-title">No inline EXPLAIN</div>
+              <div class="checklist-text">Avoids query plan pollution. Optional post-run EXPLAIN for diagnosis.</div>
+            </div>
+          </div>
+
+          <div class="checklist-item">
+            <div class="checklist-icon">✓</div>
+            <div class="checklist-content">
+              <div class="checklist-title">Run-to-run reproducibility</div>
+              <div class="checklist-text">Keys are persisted per run_id. Can reuse keys via <code>reuse_run_id</code> parameter.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Source Code Reference -->
+      <div class="content-card">
+        <h3 class="card-title">Source code reference</h3>
+        <div class="reference-links">
+          <div class="reference-item">
+            <div class="reference-title">📄 Benchmark script</div>
+            <div class="reference-path"><code>{{BENCHMARK_NOTEBOOK}}</code></div>
+            <div class="reference-desc">Main benchmark implementation (V5.3)</div>
+          </div>
+          <div class="reference-item">
+            <div class="reference-title">📊 Visualization script</div>
+            <div class="reference-path"><code>{{VISUALS_NOTEBOOK}}</code></div>
+            <div class="reference-desc">Chart generation and report builder</div>
+          </div>
+          <div class="reference-item">
+            <div class="reference-title">🔧 Utility modules</div>
+            <div class="reference-path"><code>utils/pipelined_load.py</code>, <code>utils/feature_server.py</code></div>
+            <div class="reference-desc">Helper functions for parallel execution and data loading</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Takeaway -->
+      <div class="takeaway-banner" style="margin-bottom: 0;">
+        <div class="takeaway-title">Methodology takeaway</div>
+        <div class="takeaway-body">
+          This benchmark measures <b>request-level tail latency under realistic fan-out and cache skew</b>.
+          Key design choices (SELECT *, independent entity sampling, no inline EXPLAIN) prioritize production fidelity over microbenchmark speed.
+          All metrics are persisted and reproducible via run_id.
+        </div>
       </div>
     </div>
 

@@ -1088,7 +1088,22 @@ else:
 if 'entity_timing_detail' in df.columns:
     # Try to extract Gantt data from one sample (50% hot, first serial vs first parallel)
     sample_row_serial = df[(df['fetch_mode'] == 'serial') & (df['hot_traffic_pct'] == 50)].iloc[0] if len(df[(df['fetch_mode'] == 'serial') & (df['hot_traffic_pct'] == 50)]) > 0 else None
-    sample_row_parallel = df[(df['fetch_mode'] == 'binpacked_parallel') & (df['hot_traffic_pct'] == 50) & (df['parallel_workers'] == 3)].iloc[0] if len(df[(df['fetch_mode'] == 'binpacked_parallel') & (df['hot_traffic_pct'] == 50)]) > 0 else None
+    
+    # For parallel mode, try to find workers==3, but fall back to any available worker count at 50% hot
+    parallel_filter = df[(df['fetch_mode'] == 'binpacked_parallel') & (df['hot_traffic_pct'] == 50)]
+    if 'parallel_workers' in df.columns:
+        # Try workers==3 first
+        parallel_w3 = parallel_filter[parallel_filter['parallel_workers'] == 3]
+        if len(parallel_w3) > 0:
+            sample_row_parallel = parallel_w3.iloc[0]
+        elif len(parallel_filter) > 0:
+            # Fall back to any available worker count
+            sample_row_parallel = parallel_filter.iloc[0]
+        else:
+            sample_row_parallel = None
+    else:
+        # No parallel_workers column (older data), just use any parallel mode at 50%
+        sample_row_parallel = parallel_filter.iloc[0] if len(parallel_filter) > 0 else None
     
     if sample_row_serial is not None and sample_row_parallel is not None:
         import json
@@ -1233,12 +1248,27 @@ fig, ax = plt.subplots(figsize=(14, 7))
 # This shows the worst-case scenario clearly
 cold_points = df[df['hot_traffic_pct'] == 0].copy()
 
-# CRITICAL: Remove duplicates - take only the LAST row for each mode at 0% hot
+# CRITICAL: For parallel mode, filter to w=3 specifically before deduplicating
+if 'parallel_workers' in cold_points.columns:
+    # Keep serial and binpacked as-is, but filter parallel to w=3 only
+    serial_binpacked = cold_points[cold_points['fetch_mode'].isin(['serial', 'binpacked'])]
+    parallel_w3 = cold_points[(cold_points['fetch_mode'] == 'binpacked_parallel') & 
+                               (cold_points['parallel_workers'] == 3)]
+    cold_points = pd.concat([serial_binpacked, parallel_w3], ignore_index=True)
+else:
+    # No parallel_workers column, keep all
+    pass
+
+# Remove duplicates - take only the LAST row for each mode at 0% hot
 # This prevents multiple labels being drawn on the same bar
 cold_points = cold_points.drop_duplicates(subset=['fetch_mode', 'hot_traffic_pct'], keep='last')
 
 print(f"   🔍 Debug - Rows after dedup: {len(cold_points)}")
 print(f"   🔍 Debug - Modes present: {cold_points['fetch_mode'].unique()}")
+if 'parallel_workers' in cold_points.columns:
+    parallel_data = cold_points[cold_points['fetch_mode'] == 'binpacked_parallel']
+    if len(parallel_data) > 0:
+        print(f"   🔍 Debug - Parallel workers: {parallel_data['parallel_workers'].values}")
 
 # Group by mode and hot%
 modes = ['serial', 'binpacked', 'binpacked_parallel']
@@ -1419,6 +1449,13 @@ fig, ax = plt.subplots(figsize=(14, 7))
 penalty_data = []
 for mode in modes:
     mode_df = df[df['fetch_mode'] == mode]
+    
+    # For parallel mode, filter to w=3 specifically
+    if mode == 'binpacked_parallel' and 'parallel_workers' in df.columns:
+        mode_df_w3 = mode_df[mode_df['parallel_workers'] == 3]
+        if len(mode_df_w3) > 0:
+            mode_df = mode_df_w3
+    
     p99_cold = mode_df[mode_df['hot_traffic_pct'] == 0]['p99_ms'].values
     p99_hot = mode_df[mode_df['hot_traffic_pct'] == 100]['p99_ms'].values
     
@@ -1533,10 +1570,19 @@ try:
         row_data = []
         for mode in modes:
             mode_df = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == hot_pct)]
+            
+            # For parallel mode, filter to w=3 specifically
+            if mode == 'binpacked_parallel' and 'parallel_workers' in df.columns and len(mode_df) > 0:
+                mode_df_w3 = mode_df[mode_df['parallel_workers'] == 3]
+                if len(mode_df_w3) > 0:
+                    mode_df = mode_df_w3
+                # else: fallback to any available worker count (already filtered)
+            
             if len(mode_df) > 0:
                 p99 = mode_df.iloc[0]['p99_ms']
                 row_data.append(p99)
-                print(f"  Found data: {mode} @ {hot_pct}% hot = {p99:.1f}ms")
+                workers_info = f" (w={int(mode_df.iloc[0]['parallel_workers'])})" if mode == 'binpacked_parallel' and 'parallel_workers' in mode_df.columns else ""
+                print(f"  Found data: {mode}{workers_info} @ {hot_pct}% hot = {p99:.1f}ms")
             else:
                 row_data.append(None)
                 print(f"  Missing data: {mode} @ {hot_pct}% hot")
@@ -1656,6 +1702,12 @@ try:
     # Parse entity_p99_ms at 0% hot for parallel mode (best performer)
     entity_contrib_data = []
     parallel_0_hot = df[(df['fetch_mode'] == 'binpacked_parallel') & (df['hot_traffic_pct'] == 0)]
+    
+    # Filter to w=3 specifically if parallel_workers column exists
+    if len(parallel_0_hot) > 0 and 'parallel_workers' in df.columns:
+        parallel_0_hot_w3 = parallel_0_hot[parallel_0_hot['parallel_workers'] == 3]
+        if len(parallel_0_hot_w3) > 0:
+            parallel_0_hot = parallel_0_hot_w3
 
     if len(parallel_0_hot) > 0 and 'entity_p99_ms' in df.columns:
         row = parallel_0_hot.iloc[0]
@@ -1896,6 +1948,279 @@ print("="*80)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## 📊 Tab 2: Workload Reality Charts (Fan-out + Tail Amplification)
+
+# COMMAND ----------
+
+print("\n" + "="*80)
+print("📊 GENERATING WORKLOAD REALITY CHARTS (TAB 2)")
+print("="*80 + "\n")
+
+# Chart 1: Lookup Fan-out Breakdown (per entity + total)
+print("📊 Chart 1: Lookup fan-out breakdown...")
+
+fig, ax = plt.subplots(figsize=(16, 11))
+
+# Define entity lookup counts (from benchmark design)
+# These are the actual table counts per entity in the benchmark
+entity_lookups = {
+    'Card Fingerprint': 9,     # card_fingerprint has 9 feature families
+    'Customer Email': 9,       # customer_email has 9 feature families
+    'Cardholder Name': 12      # cardholder_name has 12 feature families
+}
+
+# Calculate totals
+entities = list(entity_lookups.keys())
+lookups = list(entity_lookups.values())
+total_lookups = sum(lookups)
+
+# Create stacked bar showing breakdown
+x_pos = np.arange(1)
+bottom = 0
+colors_fanout = ['#357FF5', '#60A5FA', '#93C5FD']  # Checkout.com blue gradient
+
+bars = []
+for i, (entity, count) in enumerate(entity_lookups.items()):
+    bar = ax.barh(x_pos, count, left=bottom, height=0.5, 
+                  label=entity, color=colors_fanout[i], 
+                  edgecolor='white', linewidth=2, alpha=0.95)
+    bars.append(bar)
+    
+    # Add count labels inside bars (if wide enough)
+    if count > 2:
+        ax.text(bottom + count/2, 0, f'{count}', 
+               ha='center', va='center', fontsize=13, 
+               fontweight='700', color='white')
+    
+    bottom += count
+
+# Add total annotation
+ax.text(total_lookups + 1.5, 0, f'Total: {total_lookups} lookups\nper request',
+       ha='left', va='center', fontsize=14, fontweight='700',
+       color='#1E293B',
+       bbox=dict(boxstyle='round,pad=0.8', facecolor='#FFF9E6', 
+                edgecolor='#357FF5', alpha=0.95, linewidth=2))
+
+# Styling
+ax.set_xlim(0, total_lookups + 12)
+ax.set_ylim(-0.5, 0.5)
+ax.set_xlabel('Number of Database Lookups', fontsize=12, fontweight='600', labelpad=10, color='#475569')
+ax.set_title('Request Fan-out Breakdown: What "30 Lookups" Actually Means\n(Serial Mode: One Query Per Feature Family)',
+             fontsize=13, fontweight='600', pad=20, color='#1E293B')
+ax.set_yticks([])
+ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='#E2E8F0')
+ax.grid(True, alpha=0.15, axis='x', linewidth=1, color='#CBD5E1')
+ax.set_axisbelow(True)
+ax.set_facecolor('#FAFAFA')
+fig.patch.set_facecolor('white')
+
+# Add insight box
+fig.text(0.15, 0.15, 
+         '💡 Why this matters: Request P99 is driven by the slowest lookup across all 30.\n'
+         'Even if 29 lookups are fast (1ms), one slow lookup (100ms) dominates the tail.',
+         ha='left', va='top', fontsize=10, fontweight='500', color='#475569',
+         bbox=dict(boxstyle='round,pad=0.8', facecolor='white', 
+                  edgecolor='#E2E8F0', linewidth=1.5))
+
+# Clean up spines
+for spine in ax.spines.values():
+    spine.set_edgecolor('#E2E8F0')
+    spine.set_linewidth(1)
+
+plt.tight_layout(pad=1.5)
+plt.savefig('/tmp/zipfian_fanout_breakdown.png', dpi=150, facecolor='white')
+print("   ✅ Saved: /tmp/zipfian_fanout_breakdown.png")
+plt.close()
+
+# COMMAND ----------
+
+# Chart 2: Tail Amplification Curve (theoretical - multiple N values)
+print("📊 Chart 2: Tail amplification curve (N=10/30/50)...")
+
+fig, ax = plt.subplots(figsize=(16, 11))
+
+# Generate amplification curves for different lookup counts
+p_values = np.linspace(0, 0.10, 100)  # 0% to 10% per-lookup slow probability
+N_values = [10, 30, 50]
+colors_amp = ['#10B981', '#357FF5', '#EF4444']  # Green (good), Blue (current), Red (bad)
+labels_amp = ['N=10 (binpacked)', 'N=30 (serial)', 'N=50 (extreme)']
+
+for i, N in enumerate(N_values):
+    # P(at least 1 slow) = 1 - (1-p)^N
+    prob_any_slow = 1 - (1 - p_values) ** N
+    
+    ax.plot(p_values * 100, prob_any_slow * 100,
+           linewidth=3, color=colors_amp[i], label=labels_amp[i],
+           marker='o' if N == 30 else None, markersize=5, markevery=10,
+           alpha=0.95, zorder=3 if N == 30 else 2)
+
+# Highlight critical point: at N=30, even 3% per-lookup slow → 60% request slow
+critical_N = 30
+critical_p = 0.03
+critical_prob = (1 - (1 - critical_p) ** critical_N) * 100
+ax.plot([critical_p * 100], [critical_prob], 'o', markersize=12, 
+        color='#FF2D8D', zorder=4, 
+        markeredgecolor='white', markeredgewidth=2)
+ax.annotate(f'Critical point:\n3% per-lookup slow\n→ {critical_prob:.0f}% request slow',
+           xy=(critical_p * 100, critical_prob),
+           xytext=(critical_p * 100 + 2, critical_prob + 15),
+           fontsize=10, fontweight='600', color='#1E293B',
+           bbox=dict(boxstyle='round,pad=0.6', facecolor='#FFE6F0', 
+                    edgecolor='#FF2D8D', linewidth=2, alpha=0.95),
+           arrowprops=dict(arrowstyle='->', color='#FF2D8D', lw=2))
+
+# Styling
+ax.set_xlabel('Per-Lookup Slow Probability (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
+ax.set_ylabel('Request Has ≥1 Slow Lookup (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
+ax.set_title('Tail Amplification: How Fan-out Converts Small Per-Lookup Risk into Frequent Request Tail Events',
+             fontsize=13, fontweight='600', pad=20, color='#1E293B')
+ax.legend(loc='upper left', fontsize=11, framealpha=0.95, edgecolor='#E2E8F0', fancybox=False)
+ax.grid(True, alpha=0.15, linewidth=1, color='#CBD5E1')
+ax.set_axisbelow(True)
+ax.set_facecolor('#FAFAFA')
+fig.patch.set_facecolor('white')
+ax.set_xlim(0, 10)
+ax.set_ylim(0, 100)
+
+# Add takeaway box
+fig.text(0.72, 0.25, 
+         '🎯 Executive Takeaway:\n\n'
+         'Reducing lookup count (30→10) is the\n'
+         'most reliable "math win" because it\n'
+         'reduces opportunities for tail events.\n\n'
+         'Bin-packing delivers a structural advantage.',
+         ha='left', va='bottom', fontsize=10, fontweight='600', color='#1E293B',
+         bbox=dict(boxstyle='round,pad=1', facecolor='#FFF9E6', 
+                  edgecolor='#357FF5', linewidth=2, alpha=0.95))
+
+# Clean up spines
+for spine in ax.spines.values():
+    spine.set_edgecolor('#E2E8F0')
+    spine.set_linewidth(1)
+
+plt.tight_layout(pad=1.5)
+plt.savefig('/tmp/zipfian_amplification_curve.png', dpi=150, facecolor='white')
+print("   ✅ Saved: /tmp/zipfian_amplification_curve.png")
+plt.close()
+
+# COMMAND ----------
+
+# Chart 3: Expected Request Mix (0/1/2/3 hot entities across hot%)
+print("📊 Chart 3: Expected request mix (hot entity distribution)...")
+
+fig, ax = plt.subplots(figsize=(16, 11))
+
+# Calculate theoretical distribution using binomial probabilities
+# For 3 entities, k hot entities follows Binomial(n=3, p=hot_pct)
+hot_pct_values = [100, 90, 80, 70, 60, 50, 30, 10, 0]
+num_entities = 3
+
+# Calculate probabilities for each hot_pct
+data_by_hot_count = {
+    '0 hot (fully cold)': [],
+    '1 hot': [],
+    '2 hot': [],
+    '3 hot (fully hot)': []
+}
+
+for hot_pct in hot_pct_values:
+    p = hot_pct / 100  # Probability one entity is hot
+    
+    # Binomial probabilities for k=0,1,2,3 hot entities
+    from math import comb
+    for k in range(num_entities + 1):
+        prob = comb(num_entities, k) * (p ** k) * ((1 - p) ** (num_entities - k))
+        prob_pct = prob * 100
+        
+        if k == 0:
+            data_by_hot_count['0 hot (fully cold)'].append(prob_pct)
+        elif k == 1:
+            data_by_hot_count['1 hot'].append(prob_pct)
+        elif k == 2:
+            data_by_hot_count['2 hot'].append(prob_pct)
+        elif k == 3:
+            data_by_hot_count['3 hot (fully hot)'].append(prob_pct)
+
+# Create stacked area chart
+x = np.arange(len(hot_pct_values))
+colors_mix = ['#EF4444', '#F59E0B', '#10B981', '#357FF5']  # Red (cold) → Green → Blue (hot)
+labels_mix = ['0 hot (fully cold)', '1 hot', '2 hot', '3 hot (fully hot)']
+
+# Plot stacked areas
+bottom = np.zeros(len(hot_pct_values))
+for i, label in enumerate(labels_mix):
+    values = np.array(data_by_hot_count[label])
+    ax.fill_between(x, bottom, bottom + values, 
+                     color=colors_mix[i], alpha=0.85, label=label,
+                     edgecolor='white', linewidth=2)
+    
+    # Add labels at key points (80%, 50%, 10%)
+    for idx, hot_pct in enumerate([80, 50, 10]):
+        if hot_pct in hot_pct_values:
+            x_idx = hot_pct_values.index(hot_pct)
+            y_pos = bottom[x_idx] + values[x_idx] / 2
+            if values[x_idx] > 8:  # Only label if segment is large enough
+                ax.text(x_idx, y_pos, f'{values[x_idx]:.0f}%',
+                       ha='center', va='center', fontsize=9,
+                       fontweight='600', color='white')
+    
+    bottom += values
+
+# Styling
+ax.set_xlabel('Per-Entity Hot Traffic %', fontsize=12, fontweight='600', labelpad=10, color='#475569')
+ax.set_ylabel('Request Distribution (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
+ax.set_title('Expected Request Mix: "Mixed" Requests Are the Norm (Not the Exception)\n'
+             '(Probability of 0/1/2/3 hot entities when each entity independently has X% hot traffic)',
+             fontsize=13, fontweight='600', pad=20, color='#1E293B')
+ax.set_xticks(x)
+ax.set_xticklabels([f'{h}%' for h in hot_pct_values], fontsize=10, color='#64748B')
+ax.set_ylim(0, 100)
+ax.legend(loc='upper left', fontsize=11, framealpha=0.95, edgecolor='#E2E8F0', fancybox=False, ncol=2)
+ax.grid(True, alpha=0.15, axis='y', linewidth=1, color='#CBD5E1')
+ax.set_axisbelow(True)
+ax.set_facecolor('#FAFAFA')
+fig.patch.set_facecolor('white')
+ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
+
+# Highlight 80% hot case (production-realistic)
+highlight_idx = hot_pct_values.index(80)
+ax.axvline(highlight_idx, color='#357FF5', linestyle='--', linewidth=2, alpha=0.5, zorder=1)
+ax.text(highlight_idx, 105, '← Production scenario\n(80% hot per entity)',
+       ha='center', va='bottom', fontsize=9, fontweight='600', color='#357FF5')
+
+# Add insight annotations
+# Calculate actual values at 80% hot
+p80 = 0.8
+fully_hot_80 = (p80 ** 3) * 100
+fully_cold_80 = ((1 - p80) ** 3) * 100
+mixed_80 = 100 - fully_hot_80 - fully_cold_80
+
+fig.text(0.15, 0.12, 
+         f'💡 At 80% hot (production):\n'
+         f'• Fully hot: {fully_hot_80:.1f}% (cache wins)\n'
+         f'• Mixed (1-2 cold): {mixed_80:.1f}% (most common!)\n'
+         f'• Fully cold: {fully_cold_80:.1f}% (tail dominates)\n\n'
+         f'Mixed cases are where "it depends" lives.',
+         ha='left', va='bottom', fontsize=10, fontweight='600', color='#1E293B',
+         bbox=dict(boxstyle='round,pad=1', facecolor='#FFF9E6', 
+                  edgecolor='#F59E0B', linewidth=2, alpha=0.95))
+
+# Clean up spines
+for spine in ax.spines.values():
+    spine.set_edgecolor('#E2E8F0')
+    spine.set_linewidth(1)
+
+plt.tight_layout(pad=1.5)
+plt.savefig('/tmp/zipfian_request_mix.png', dpi=150, facecolor='white')
+print("   ✅ Saved: /tmp/zipfian_request_mix.png")
+plt.close()
+
+print("\n✅ Workload Reality Charts Complete!")
+print("="*80)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## 🎯 Export HTML Report (Self-Contained with Checkout.com Styling)
 
 # COMMAND ----------
@@ -1937,7 +2262,11 @@ chart_files = {
     "exec_cold_penalty": "/tmp/zipfian_exec_cold_penalty.png",
     "exec_sla_heatmap": "/tmp/zipfian_exec_sla_heatmap.png",
     "exec_entity_composition": "/tmp/zipfian_exec_entity_composition.png",
-    "exec_tail_amplification": "/tmp/zipfian_exec_tail_amplification.png"
+    "exec_tail_amplification": "/tmp/zipfian_exec_tail_amplification.png",
+    # Workload Reality Charts (Tab 2) - Fan-out + Tail Amplification
+    "fanout_breakdown": "/tmp/zipfian_fanout_breakdown.png",
+    "amplification_curve": "/tmp/zipfian_amplification_curve.png",
+    "request_mix": "/tmp/zipfian_request_mix.png"
 }
 
 chart_base64 = {}
@@ -1975,10 +2304,14 @@ if results_80:
     ref_p99 = 79.0
     vs_ref = ((best_p99 - ref_p99) / ref_p99 * 100)
     
+    # Safely get serial baseline
+    serial_80 = df[(df['fetch_mode']=='serial') & (df['hot_traffic_pct']==80)]
+    serial_baseline = f"Serial baseline: {serial_80['p99_ms'].iloc[0]:.1f}ms" if len(serial_80) > 0 else "Serial baseline: N/A"
+    
     findings = [
         f"Best P99 at 80% hot: {best_p99:.1f}ms ({best_mode})",
         f"vs Customer Reference (79ms): {vs_ref:+.1f}%",
-        f"Serial baseline: {df[(df['fetch_mode']=='serial') & (df['hot_traffic_pct']==80)]['p99_ms'].iloc[0]:.1f}ms"
+        serial_baseline
     ]
 else:
     findings = ["No 80% hot results"]
@@ -2134,13 +2467,23 @@ replacements = {
     "{{FINDING_2}}": findings[1] if len(findings) > 1 else "Parallel execution shows diminishing returns after 2-3 workers",
     "{{FINDING_3}}": findings[2] if len(findings) > 2 else "Cold reads dominate P99 tail latency",
     
-    # Charts (base64 encoded)
+    # Charts (base64 encoded) - old shorthand names (for backwards compatibility)
     "{{CHART_P99}}": chart_base64.get("p99_vs_skew", ""),
     "{{CHART_COST}}": chart_base64.get("cost_normalized", ""),
     "{{CHART_CONCURRENCY}}": chart_base64.get("concurrency", ""),
     "{{CHART_GANTT}}": chart_base64.get("gantt", ""),
     "{{CHART_HEATMAP}}": chart_base64.get("heatmap", ""),
     "{{CHART_WORST}}": chart_base64.get("worst_case", ""),
+    
+    # Charts (base64 encoded) - new full names for current template
+    "{{CHART_P99_SKEW_BASE64}}": chart_base64.get("p99_vs_skew", ""),
+    "{{CHART_COST_NORMALIZED_BASE64}}": chart_base64.get("cost_normalized", ""),
+    "{{CHART_CONCURRENCY_BASE64}}": chart_base64.get("concurrency", ""),
+    "{{CHART_GANTT_BASE64}}": chart_base64.get("gantt", ""),
+    "{{CHART_HEATMAP_BASE64}}": chart_base64.get("heatmap", ""),
+    "{{CHART_WORST_CASE_BASE64}}": chart_base64.get("worst_case", ""),
+    "{{CHART_CACHE_BASE64}}": chart_base64.get("cache", ""),
+    "{{CHART_IO_BASE64}}": chart_base64.get("io", ""),
     
     # New template placeholders (will be ignored if using old template)
     "{{CHART_EXEC_SUMMARY_BASE64}}": chart_base64.get("exec_sla_heatmap", ""),  # Use SLA heatmap
@@ -2167,6 +2510,11 @@ replacements = {
     # Alias for P99 curves chart (enhanced version)
     "{{CHART_EXEC_P99_CURVES_BASE64}}": chart_base64.get("p99_vs_skew", ""),
     
+    # Workload Reality Charts (Tab 2) - Fan-out + Tail Amplification
+    "{{CHART_FANOUT_BREAKDOWN_BASE64}}": chart_base64.get("fanout_breakdown", ""),
+    "{{CHART_AMPLIFICATION_CURVE_BASE64}}": chart_base64.get("amplification_curve", ""),
+    "{{CHART_REQUEST_MIX_BASE64}}": chart_base64.get("request_mix", ""),
+    
     # Notebook paths
     "{{BENCHMARK_NOTEBOOK}}": "/Workspace/Repos/lakebase-benchmarking/notebooks/benchmark_zipfian_realistic_v5.3",
     "{{VISUALS_NOTEBOOK}}": "/Workspace/Repos/lakebase-benchmarking/notebooks/zipfian_benchmark_visuals",
@@ -2176,7 +2524,40 @@ replacements = {
     "{{SLOW_QUERIES_TABLE_ROWS}}": "<tr><td colspan='5'>Data available in zipfian_slow_query_log table</td></tr>",
     "{{ENTITY_CONTRIBUTION_TABLE_ROWS}}": "<tr><td colspan='5'>Per-entity P99 contribution analysis</td></tr>",
     "{{PARALLEL_ANALYSIS_TABLE_ROWS}}": "<tr><td colspan='5'>Pool wait time and concurrency analysis</td></tr>",
-    "{{KEY_SAMPLING_TABLE_ROWS}}": f"<tr><td>Total Sampled</td><td>{summary.get('results_80_hot', [{}])[0].get('sampled_total', 'N/A') if summary.get('results_80_hot') else 'N/A'}</td></tr>"
+    "{{KEY_SAMPLING_TABLE_ROWS}}": f"<tr><td>Total Sampled</td><td>{summary.get('results_80_hot', [{}])[0].get('sampled_total', 'N/A') if summary.get('results_80_hot') else 'N/A'}</td></tr>",
+    
+    # Chart narratives (3 bullets per chart)
+    "{{CHART1_NARRATIVE_1}}": "P99 latency degrades as hot traffic decreases from 100% to 0%",
+    "{{CHART1_NARRATIVE_2}}": "Parallel mode (3 workers) maintains best P99 across all cache scenarios",
+    "{{CHART1_NARRATIVE_3}}": "All modes cross 79ms SLA in cold reality zone (0-20% hot)",
+    
+    "{{CHART2_NARRATIVE_1}}": "Cost-normalized metric: wall-clock latency per database call",
+    "{{CHART2_NARRATIVE_2}}": "Binpacked queries are heavier (UNION ALL) but reduce fanout",
+    "{{CHART2_NARRATIVE_3}}": "Parallelism helps wall-clock overlap, not raw query efficiency",
+    
+    "{{CHART3_NARRATIVE_1}}": "Concurrency reduces P99 tail latency via parallel execution",
+    "{{CHART3_NARRATIVE_2}}": "Returns flatten after 3 workers (bottleneck shifts to DB)",
+    "{{CHART3_NARRATIVE_3}}": "Sweet spot at w=3 (diminishing returns after this point)",
+    
+    "{{CHART4_NARRATIVE_1}}": "Gantt chart shows entity execution timeline comparison",
+    "{{CHART4_NARRATIVE_2}}": "Serial: 30 queries run sequentially (one after another)",
+    "{{CHART4_NARRATIVE_3}}": "Parallel: 10 binpacked queries run concurrently (overlap)",
+    
+    "{{CHART5_NARRATIVE_1}}": "Heatmap shows which entity dominates P99 at each hot/cold ratio",
+    "{{CHART5_NARRATIVE_2}}": "All entities degrade equally as cache locality drops",
+    "{{CHART5_NARRATIVE_3}}": "No single entity is the bottleneck - it's a cache issue",
+    
+    "{{CHART6_NARRATIVE_1}}": "Fully cold requests: all 3 entities miss cache simultaneously",
+    "{{CHART6_NARRATIVE_2}}": "Frequency matches theory: (1-hot%)³ probability",
+    "{{CHART6_NARRATIVE_3}}": "These worst-case requests drive the P99 tail",
+    
+    "{{CHART7_NARRATIVE_1}}": "Strong negative correlation: cache ↑ → latency ↓",
+    "{{CHART7_NARRATIVE_2}}": "Request cache score (0.0=all cold, 1.0=all hot)",
+    "{{CHART7_NARRATIVE_3}}": "Physics proof: cache effectiveness is measurable",
+    
+    "{{CHART8_NARRATIVE_1}}": "I/O amplification: disk blocks read per request",
+    "{{CHART8_NARRATIVE_2}}": "Cold reads trigger more I/O operations",
+    "{{CHART8_NARRATIVE_3}}": "Directly correlates with latency increase"
 }
 
 html = html_template
