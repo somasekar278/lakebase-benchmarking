@@ -83,6 +83,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import json
+from datetime import datetime
 
 # Set plotting style
 sns.set_style("whitegrid")
@@ -860,8 +861,24 @@ export_data = {
 }
 
 output_path = '/dbfs/tmp/zipfian_benchmark_summary.json'
+
+# Custom JSON encoder to handle pandas Timestamps and numpy types
+class CustomJSONEncoderEarly(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (pd.Timestamp, datetime)):
+            return obj.isoformat()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if pd.isna(obj):
+            return None
+        return super().default(obj)
+
 with open(output_path, 'w') as f:
-    json.dump(export_data, f, indent=2)
+    json.dump(export_data, f, indent=2, cls=CustomJSONEncoderEarly)
 
 print(f"✅ Results exported to: {output_path}")
 print()

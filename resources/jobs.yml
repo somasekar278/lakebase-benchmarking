@@ -186,7 +186,6 @@ resources:
             - pypi:
                 package: seaborn
           
-          timeout_seconds: 1800  # 30 minutes max
           max_retries: 0
         
         - task_key: generate_visualizations
@@ -223,7 +222,6 @@ resources:
             - pypi:
                 package: jinja2
           
-          timeout_seconds: 1800  # 30 minutes max
           max_retries: 0
       
       max_concurrent_runs: 1
