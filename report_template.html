@@ -4349,6 +4349,41 @@ document.addEventListener('DOMContentLoaded', function() {
       });
     });
   }
+  
+  // ✅ Results & Tail Behavior Segmented Tabs (.seg-tab buttons with data-tab attribute)
+  document.querySelectorAll('.seg-tabs').forEach(tabGroup => {
+    const buttons = tabGroup.querySelectorAll('.seg-tab');
+    
+    buttons.forEach(btn => {
+      btn.addEventListener('click', function() {
+        const targetTabId = this.getAttribute('data-tab');
+        
+        // Remove active/is-active class from all buttons in this group
+        buttons.forEach(b => {
+          b.classList.remove('is-active');
+          b.setAttribute('aria-selected', 'false');
+        });
+        
+        // Add active class to clicked button
+        this.classList.add('is-active');
+        this.setAttribute('aria-selected', 'true');
+        
+        // Hide all seg-panel siblings
+        const parentCard = tabGroup.closest('.card, .content-card');
+        if (parentCard) {
+          parentCard.querySelectorAll('.seg-panel').forEach(panel => {
+            panel.style.display = 'none';
+          });
+          
+          // Show target panel
+          const targetPanel = parentCard.querySelector('#' + targetTabId);
+          if (targetPanel) {
+            targetPanel.style.display = 'block';
+          }
+        }
+      });
+    });
+  });
 });
 
 // Chart modal functions
