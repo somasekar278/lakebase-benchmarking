@@ -1830,8 +1830,8 @@ slow_query_query = f"""
         AND query_latency_ms > 100
     )
     SELECT
-      b.mode,
-      b.hot_traffic_pct,
+      b.mode AS mode,
+      b.hot_traffic_pct AS hot_traffic_pct,
       COUNT(*) AS total_requests,
       COUNT(DISTINCT s.request_id) AS requests_with_slow_query,
       100.0 * COUNT(DISTINCT s.request_id) / NULLIF(COUNT(*), 0) AS tail_amplification_pct
@@ -1840,8 +1840,8 @@ slow_query_query = f"""
       ON s.mode = b.mode
      AND s.hot_traffic_pct = b.hot_traffic_pct
      AND s.request_id = b.request_id
-    GROUP BY b.mode, b.hot_traffic_pct
-    ORDER BY b.mode, b.hot_traffic_pct DESC
+    GROUP BY 1, 2
+    ORDER BY 1, 2 DESC
 """
 
 try:
