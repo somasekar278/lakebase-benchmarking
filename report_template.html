@@ -2550,74 +2550,53 @@
           </div>
         </div>
 
-        <!-- Bottom-left: Math Callout (Purple Style) -->
+        <!-- Bottom: Cost Models & Scaling Limits (Two-Column) -->
         <div class="content-card">
-          <div style="padding: 24px;">
-            <!-- Purple math callout matching Tab 2 style -->
-            <div style="background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%); 
-                        border-radius: 12px; padding: 24px; color: white; margin-bottom: 20px;">
-              <div style="font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #FCD34D; margin-bottom: 16px;">
-                EXECUTION MODE COST MODELS
-              </div>
-              <div style="background: rgba(255,255,255,0.15); border-radius: 8px; padding: 16px; margin-bottom: 16px; font-family: 'SF Mono', 'Courier New', monospace; font-size: 14px; line-height: 1.8;">
-                <div>Serial: L<sub>req</sub> ≈ Σ L<sub>lookup</sub></div>
-                <div>Parallel: L<sub>req</sub> ≈ max(L<sub>entity</sub>) + overhead</div>
-                <div style="color: var(--brand-3);">RPC: L<sub>req</sub> ≈ L<sub>server_fn</sub></div>
-              </div>
-            </div>
-
-            <!-- 3 Bullets -->
-            <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
-              <li style="padding-left: 24px; position: relative;">
-                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
-                Parallelism overlaps independent entity fan-out
-              </li>
-              <li style="padding-left: 24px; position: relative;">
-                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
-                Tail becomes "critical path" dominated
-              </li>
-              <li style="padding-left: 24px; position: relative;">
-                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
-                Overhead: scheduling + connection + contention
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <!-- Bottom-right: What Limits Scaling -->
-        <div class="content-card">
-          <div style="padding: 24px;">
-            <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 20px; color: var(--text);">
-              What limits scaling
-            </h3>
+          <div class="content-grid two-col" style="gap: 32px;">
             
-            <ul style="list-style: none; padding: 0; margin: 0 0 24px 0; font-size: 15px; line-height: 2; color: var(--muted);">
-              <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
-                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
-                <strong style="color: var(--text);">DB contention / connection saturation</strong><br/>
-                <span style="font-size: 13px;">As workers increase, shared buffer locks and connection pool pressure grow.</span>
-              </li>
-              <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
-                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
-                <strong style="color: var(--text);">Locking / shared buffer pressure</strong><br/>
-                <span style="font-size: 13px;">Parallel queries compete for the same cache lines and row locks.</span>
-              </li>
-              <li style="padding-left: 24px; position: relative;">
-                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
-                <strong style="color: var(--text);">Per-request overhead (client + server)</strong><br/>
-                <span style="font-size: 13px;">Thread creation, context switching, and query planning costs don't parallelize.</span>
-              </li>
-            </ul>
-
-            <div style="background: var(--surface-2); border-left: 3px solid var(--warning); padding: 16px; border-radius: 6px;">
-              <div style="font-size: 13px; font-weight: 700; color: var(--warning); margin-bottom: 8px;">
-                Measured indicator
+            <!-- Left: Cost Models -->
+            <div style="padding: 20px;">
+              <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px; color: var(--text);">
+                Execution mode cost models
+              </h3>
+              
+              <div style="font-family: 'SF Mono', 'Courier New', monospace; font-size: 14px; line-height: 2.2; color: var(--text); margin-bottom: 16px;">
+                <div>Serial:&nbsp;&nbsp;&nbsp;L<sub>req</sub> ≈ Σ L<sub>lookup</sub></div>
+                <div>Parallel:&nbsp;L<sub>req</sub> ≈ max(L<sub>entity</sub>) + overhead</div>
+                <div>RPC:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;L<sub>req</sub> ≈ L<sub>server_fn</sub></div>
               </div>
-              <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
-                Beyond 3 workers, P99 improvement drops below 10% per additional worker — 
-                contention overhead begins to dominate parallelism gains.
-              </div>
+              
+              <p style="font-size: 13px; color: var(--muted); line-height: 1.6; margin: 0;">
+                Parallelism overlaps entity fan-out, but tail latency is still dominated by the critical path.
+              </p>
             </div>
+            
+            <!-- Right: What Limits Scaling -->
+            <div style="padding: 20px;">
+              <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px; color: var(--text);">
+                What limits scaling
+              </h3>
+              
+              <ul style="list-style: none; padding: 0; margin: 0 0 16px 0; font-size: 14px; line-height: 1.9; color: var(--muted);">
+                <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                  <span style="position: absolute; left: 0; color: var(--text);">•</span>
+                  DB connection / pool saturation
+                </li>
+                <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                  <span style="position: absolute; left: 0; color: var(--text);">•</span>
+                  Shared buffer & lock contention
+                </li>
+                <li style="padding-left: 20px; position: relative;">
+                  <span style="position: absolute; left: 0; color: var(--text);">•</span>
+                  Per-request overhead (client + server)
+                </li>
+              </ul>
+              
+              <p style="font-size: 13px; color: var(--text); line-height: 1.6; margin: 0; font-weight: 600;">
+                Measured: Beyond 3 workers, P99 improvement drops below 10% per additional worker.
+              </p>
+            </div>
+            
           </div>
         </div>
 
