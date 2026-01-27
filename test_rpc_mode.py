@@ -66,10 +66,10 @@ def get_sample_keys(conn):
         """)
         keys['customer_email'] = cur.fetchone()[0]
         
-        # Cardholder name
+        # Cardholder name (note: _clean suffix)
         cur.execute("""
             SELECT hash_key 
-            FROM features.client_id_cardholder_name__fraud_rates__30d 
+            FROM features.client_id_cardholder_name_clean__fraud_rates__30d 
             LIMIT 1
         """)
         keys['cardholder_name'] = cur.fetchone()[0]

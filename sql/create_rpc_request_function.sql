@@ -164,16 +164,16 @@ BEGIN
     SELECT jsonb_agg(to_jsonb(t))
     INTO v_group_result
     FROM (
-        SELECT *, 'client_id_cardholder_name__fraud_rates__30d' AS _table
-        FROM features.client_id_cardholder_name__fraud_rates__30d
+        SELECT *, 'client_id_cardholder_name_clean__fraud_rates__30d' AS _table
+        FROM features.client_id_cardholder_name_clean__fraud_rates__30d
         WHERE hash_key = p_name_key
         UNION ALL
-        SELECT *, 'client_id_cardholder_name__fraud_rates__90d' AS _table
-        FROM features.client_id_cardholder_name__fraud_rates__90d
+        SELECT *, 'client_id_cardholder_name_clean__fraud_rates__90d' AS _table
+        FROM features.client_id_cardholder_name_clean__fraud_rates__90d
         WHERE hash_key = p_name_key
         UNION ALL
-        SELECT *, 'client_id_cardholder_name__fraud_rates__365d' AS _table
-        FROM features.client_id_cardholder_name__fraud_rates__365d
+        SELECT *, 'client_id_cardholder_name_clean__fraud_rates__365d' AS _table
+        FROM features.client_id_cardholder_name_clean__fraud_rates__365d
         WHERE hash_key = p_name_key
     ) t;
     v_entity_result := jsonb_set(v_entity_result, '{fraud_rates}', COALESCE(v_group_result, '[]'::jsonb));
@@ -182,16 +182,16 @@ BEGIN
     SELECT jsonb_agg(to_jsonb(t))
     INTO v_group_result
     FROM (
-        SELECT *, 'client_id_cardholder_name__time_since__30d' AS _table
-        FROM features.client_id_cardholder_name__time_since__30d
+        SELECT *, 'client_id_cardholder_name_clean__time_since__30d' AS _table
+        FROM features.client_id_cardholder_name_clean__time_since__30d
         WHERE hash_key = p_name_key
         UNION ALL
-        SELECT *, 'client_id_cardholder_name__time_since__90d' AS _table
-        FROM features.client_id_cardholder_name__time_since__90d
+        SELECT *, 'client_id_cardholder_name_clean__time_since__90d' AS _table
+        FROM features.client_id_cardholder_name_clean__time_since__90d
         WHERE hash_key = p_name_key
         UNION ALL
-        SELECT *, 'client_id_cardholder_name__time_since__365d' AS _table
-        FROM features.client_id_cardholder_name__time_since__365d
+        SELECT *, 'client_id_cardholder_name_clean__time_since__365d' AS _table
+        FROM features.client_id_cardholder_name_clean__time_since__365d
         WHERE hash_key = p_name_key
     ) t;
     v_entity_result := jsonb_set(v_entity_result, '{time_since}', COALESCE(v_group_result, '[]'::jsonb));
@@ -200,19 +200,37 @@ BEGIN
     SELECT jsonb_agg(to_jsonb(t))
     INTO v_group_result
     FROM (
-        SELECT *, 'client_id_cardholder_name__good_rates__30d' AS _table
-        FROM features.client_id_cardholder_name__good_rates__30d
+        SELECT *, 'client_id_cardholder_name_clean__good_rates__30d' AS _table
+        FROM features.client_id_cardholder_name_clean__good_rates__30d
         WHERE hash_key = p_name_key
         UNION ALL
-        SELECT *, 'client_id_cardholder_name__good_rates__90d' AS _table
-        FROM features.client_id_cardholder_name__good_rates__90d
+        SELECT *, 'client_id_cardholder_name_clean__good_rates__90d' AS _table
+        FROM features.client_id_cardholder_name_clean__good_rates__90d
         WHERE hash_key = p_name_key
         UNION ALL
-        SELECT *, 'client_id_cardholder_name__good_rates__365d' AS _table
-        FROM features.client_id_cardholder_name__good_rates__365d
+        SELECT *, 'client_id_cardholder_name_clean__good_rates__365d' AS _table
+        FROM features.client_id_cardholder_name_clean__good_rates__365d
         WHERE hash_key = p_name_key
     ) t;
     v_entity_result := jsonb_set(v_entity_result, '{good_rates}', COALESCE(v_group_result, '[]'::jsonb));
+    
+    -- tesseract_velocities group (additional group for cardholder_name_clean)
+    SELECT jsonb_agg(to_jsonb(t))
+    INTO v_group_result
+    FROM (
+        SELECT *, 'client_id_cardholder_name_clean__tesseract_velocities__30d' AS _table
+        FROM features.client_id_cardholder_name_clean__tesseract_velocities__30d
+        WHERE hash_key = p_name_key
+        UNION ALL
+        SELECT *, 'client_id_cardholder_name_clean__tesseract_velocities__90d' AS _table
+        FROM features.client_id_cardholder_name_clean__tesseract_velocities__90d
+        WHERE hash_key = p_name_key
+        UNION ALL
+        SELECT *, 'client_id_cardholder_name_clean__tesseract_velocities__365d' AS _table
+        FROM features.client_id_cardholder_name_clean__tesseract_velocities__365d
+        WHERE hash_key = p_name_key
+    ) t;
+    v_entity_result := jsonb_set(v_entity_result, '{tesseract_velocities}', COALESCE(v_group_result, '[]'::jsonb));
     
     v_result := jsonb_set(v_result, '{cardholder_name}', v_entity_result);
     
