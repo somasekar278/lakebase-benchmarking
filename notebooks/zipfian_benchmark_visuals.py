@@ -2386,7 +2386,8 @@ fig, ax = plt.subplots(figsize=(16, 11))
 
 # Calculate theoretical distribution using binomial probabilities
 # For 3 entities, k hot entities follows Binomial(n=3, p=hot_pct)
-hot_pct_values = [100, 90, 80, 70, 60, 50, 30, 10, 0]
+# ✅ FIXED: Reversed X-axis to run left→right from 0% hot to 100% hot
+hot_pct_values = [0, 10, 30, 50, 60, 70, 80, 90, 100]
 num_entities = 3
 
 # Calculate probabilities for each hot_pct
@@ -2428,27 +2429,22 @@ for i, label in enumerate(labels_mix):
                      color=colors_mix[i], alpha=0.85, label=label,
                      edgecolor='white', linewidth=2)
     
-    # Add labels at key points (80%, 50%, 10%)
-    for idx, hot_pct in enumerate([80, 50, 10]):
-        if hot_pct in hot_pct_values:
-            x_idx = hot_pct_values.index(hot_pct)
-            y_pos = bottom[x_idx] + values[x_idx] / 2
-            if values[x_idx] > 8:  # Only label if segment is large enough
-                ax.text(x_idx, y_pos, f'{values[x_idx]:.0f}%',
-                       ha='center', va='center', fontsize=9,
-                       fontweight='600', color='white')
+    # ✅ FIXED: Removed most internal percentage labels to reduce visual noise
+    # Labels are not needed - the legend and annotation do the work
     
     bottom += values
 
 # Styling
 ax.set_xlabel('Per-Entity Hot Traffic %', fontsize=12, fontweight='600', labelpad=10, color='#475569')
 ax.set_ylabel('Request Distribution (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
-ax.set_title('Expected Request Mix: "Mixed" Requests Are the Norm (Not the Exception)\n'
-             '(Probability of 0/1/2/3 hot entities when each entity independently has X% hot traffic)',
+# ✅ FIXED: Simplified title for executive readability
+ax.set_title('Most production requests are mixed or fully cold\n'
+             'Request composition when entities are independently hot',
              fontsize=13, fontweight='600', pad=20, color='#1E293B')
 ax.set_xticks(x)
 ax.set_xticklabels([f'{h}%' for h in hot_pct_values], fontsize=10, color='#64748B')
 ax.set_ylim(0, 100)
+# ✅ Legend already has explicit labels (0 hot, 1 hot, 2 hot, 3 hot)
 ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='#E2E8F0', fancybox=False, ncol=2)
 ax.grid(True, alpha=0.15, axis='y', linewidth=1, color='#CBD5E1')
 ax.set_axisbelow(True)
@@ -2456,31 +2452,27 @@ ax.set_facecolor('#FAFAFA')
 fig.patch.set_facecolor('white')
 ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
 
-# Highlight production-like range (0-10% hot) - most requests are cold/mixed
-if 10 in hot_pct_values:
-    highlight_idx = hot_pct_values.index(10)
-    ax.axvline(highlight_idx, color='#DC2626', linestyle='--', linewidth=2, alpha=0.6, zorder=1)
-    ax.text(highlight_idx, 50, 'Production-like skew\n(0-10% hot: mostly cold)',
-           ha='center', va='center', fontsize=10, fontweight='700', color='#DC2626',
-           bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
-                    edgecolor='#DC2626', linewidth=1.5, alpha=0.95))
-
-# Add insight annotations - moved up to avoid x-axis overlap
-# Calculate actual values at 10% hot (production-like skew)
+# ✅ FIXED: Single strong annotation at 10% hot position (production-like)
+# Calculate actual values at 10% hot
 p10 = 0.10
 fully_hot_10 = (p10 ** 3) * 100
 fully_cold_10 = ((1 - p10) ** 3) * 100
 mixed_10 = 100 - fully_hot_10 - fully_cold_10
 
-fig.text(0.15, 0.20, 
-         f'💡 At 10% hot (production-like skew):\n'
-         f'• Fully hot: {fully_hot_10:.1f}% (rare cache wins)\n'
-         f'• Mixed (1-2 cold): {mixed_10:.1f}% (most common!)\n'
-         f'• Fully cold: {fully_cold_10:.1f}% (tail dominates)\n\n'
-         f'Most requests are cold/mixed — optimize cold path.',
-         ha='left', va='bottom', fontsize=10, fontweight='600', color='#1E293B',
-         bbox=dict(boxstyle='round,pad=1', facecolor='#FFF9E6', 
-                  edgecolor='#F59E0B', linewidth=2, alpha=0.95))
+if 10 in hot_pct_values:
+    highlight_idx = hot_pct_values.index(10)
+    # Subtle dashed line at 10% hot
+    ax.axvline(highlight_idx, color='#DC2626', linestyle='--', linewidth=2, alpha=0.5, zorder=1)
+    
+    # Single strong callout annotation
+    ax.text(highlight_idx + 0.15, 35, 
+            f'At 0–10% hot per entity (production-like):\n'
+            f'~{fully_cold_10:.0f}% of requests are fully cold, ~{mixed_10:.0f}% are mixed.\n'
+            f'Fully-hot requests are vanishingly rare.\n'
+            f'P99 is driven by cold-path behavior.',
+            ha='left', va='center', fontsize=10.5, fontweight='600', color='#1E293B',
+            bbox=dict(boxstyle='round,pad=0.8', facecolor='#FEFCE8', 
+                     edgecolor='#DC2626', linewidth=1.5, alpha=0.95))
 
 # Clean up spines
 for spine in ax.spines.values():
