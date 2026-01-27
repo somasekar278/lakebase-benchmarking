@@ -2062,38 +2062,29 @@ except Exception as e:
 # Chart 6: Tail Amplification Probability (Serial-Only)
 print("📊 Chart 6: Tail Amplification Probability (Serial-only)...")
 
-# Query slow query log to calculate P(request has ≥1 slow query)
-# ✅ UPDATED: Now shows serial, binpacked, and binpacked_parallel for comparison
-# - In serial mode, "≥1 slow query" directly causes tail because latency = Σ(queries)
-# - In binpacked mode, shows impact of query consolidation on tail risk
-# - In parallel mode, shows critical path entity dominance vs individual slow queries
+# Query slow query log to calculate P(request_latency_ms >= REQUEST_SLOW_THRESHOLD_MS)
+# ✅ UPDATED: Now uses request-level slow events (event_type='request')
+# - This captures tail amplification correctly: requests that breach the SLA/threshold
+# - Previous logic only counted per-table slow queries (missing cumulative fan-out effect)
+# - Shows serial, binpacked, and binpacked_parallel for comparison
 slow_query_query = f"""
-    WITH base AS (
-      SELECT mode, hot_traffic_pct, request_id
-      FROM features.zipfian_request_timing
-      WHERE run_id = '{RUN_ID}'
-        AND mode IN ('serial', 'binpacked', 'binpacked_parallel')
-    ),
-    slow AS (
-      SELECT mode, hot_traffic_pct, request_id
-      FROM features.zipfian_slow_query_log
-      WHERE run_id = '{RUN_ID}'
-        AND mode IN ('serial', 'binpacked', 'binpacked_parallel')
-        AND query_latency_ms >= 40
-    )
     SELECT
-      b.mode AS mode,
-      b.hot_traffic_pct AS hot_traffic_pct,
-      COUNT(*) AS total_requests,
-      COUNT(DISTINCT s.request_id) AS requests_with_slow_query,
-      100.0 * COUNT(DISTINCT s.request_id) / NULLIF(COUNT(*), 0) AS tail_amplification_pct
-    FROM base b
-    LEFT JOIN slow s
-      ON s.mode = b.mode
-     AND s.hot_traffic_pct = b.hot_traffic_pct
-     AND s.request_id = b.request_id
-    GROUP BY 1, 2
-    ORDER BY 1, 2 DESC
+      s.mode AS mode,
+      s.hot_traffic_pct AS hot_traffic_pct,
+      COUNT(DISTINCT r.request_id) AS total_requests,
+      COUNT(DISTINCT s.request_id) AS requests_exceeding_threshold,
+      100.0 * COUNT(DISTINCT s.request_id) / NULLIF(COUNT(DISTINCT r.request_id), 0) AS tail_amplification_pct
+    FROM features.zipfian_request_timing r
+    LEFT JOIN features.zipfian_slow_query_log s
+      ON s.run_id = r.run_id
+     AND s.mode = r.mode
+     AND s.hot_traffic_pct = r.hot_traffic_pct
+     AND s.request_id = r.request_id
+     AND s.event_type = 'request'
+    WHERE r.run_id = '{RUN_ID}'
+      AND r.mode IN ('serial', 'binpacked', 'binpacked_parallel')
+    GROUP BY s.mode, s.hot_traffic_pct
+    ORDER BY s.mode, s.hot_traffic_pct DESC
 """
 
 try:
@@ -2152,7 +2143,7 @@ try:
         # Styling
         ax.set_xlabel('Hot Traffic % (per entity)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
         ax.set_ylabel('Probability of Tail Amplification (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
-        ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query ≥40ms)\n(Derived from per-statement slow-query logs)',
+        ax.set_title('Tail Amplification Risk: P(Request Latency ≥100ms)\n(Request-level slow events: fan-out cumulative effect)',
                      fontsize=12, fontweight='600', pad=20, color='#1E293B')
         ax.legend(fontsize=10, loc='upper left', framealpha=0.95, edgecolor='#E2E8F0', fancybox=False)
         ax.grid(True, alpha=0.15, linewidth=1, color='#CBD5E1')
@@ -2186,7 +2177,7 @@ try:
         ax.text(0.5, 0.5, placeholder_msg, 
                ha='center', va='center', fontsize=13, color='#64748B', transform=ax.transAxes,
                bbox=dict(boxstyle='round,pad=1', facecolor='#F8FAFC', edgecolor='#E2E8F0', linewidth=2))
-        ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query ≥40ms)',
+        ax.set_title('Tail Amplification Risk: P(Request Latency ≥100ms)',
                      fontsize=13, fontweight='600', pad=20, color='#1E293B')
         ax.axis('off')
         fig.patch.set_facecolor('white')

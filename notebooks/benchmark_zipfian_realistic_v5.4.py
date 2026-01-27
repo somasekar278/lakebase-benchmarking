@@ -131,6 +131,11 @@ PARALLEL_WORKERS = [int(w.strip()) for w in PARALLEL_WORKERS_STR.split(",") if w
 LOG_QUERY_TIMINGS = (dbutils.widgets.get("log_query_timings") or "true") == "true"
 SLOW_QUERY_THRESHOLD_MS = float(dbutils.widgets.get("slow_query_threshold_ms") or "40")
 
+# ✅ Request/Entity-level slow event thresholds
+SLA_TARGET_MS = 79  # P99 target (already used elsewhere)
+REQUEST_SLOW_THRESHOLD_MS = 100  # Requests exceeding this are logged as slow
+ENTITY_SLOW_THRESHOLD_MS = 60  # Entity wall-clock (DB + pool wait) exceeding this
+
 # ✅ Column projection
 # Fix #6: Removed unused projection_mode widget/variable to avoid confusion.
 SELECT_CLAUSE = "*"  # Always use * until per-table projections are defined
@@ -618,6 +623,42 @@ def ensure_results_table(conn):
         cur.execute(f"""
             CREATE INDEX IF NOT EXISTS idx_slow_query_log_run
             ON {RESULTS_SCHEMA}.zipfian_slow_query_log (run_id, mode, hot_traffic_pct);
+        """)
+        
+        # ✅ Add event_type column for request/entity/table-level slow events
+        cur.execute(f"""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = '{RESULTS_SCHEMA}'
+                    AND table_name = 'zipfian_slow_query_log'
+                    AND column_name = 'event_type'
+                ) THEN
+                    ALTER TABLE {RESULTS_SCHEMA}.zipfian_slow_query_log
+                    ADD COLUMN event_type TEXT DEFAULT 'table_query';
+                END IF;
+                
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = '{RESULTS_SCHEMA}'
+                    AND table_name = 'zipfian_slow_query_log'
+                    AND column_name = 'queries_count'
+                ) THEN
+                    ALTER TABLE {RESULTS_SCHEMA}.zipfian_slow_query_log
+                    ADD COLUMN queries_count INT;
+                END IF;
+                
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = '{RESULTS_SCHEMA}'
+                    AND table_name = 'zipfian_slow_query_log'
+                    AND column_name = 'pool_wait_ms'
+                ) THEN
+                    ALTER TABLE {RESULTS_SCHEMA}.zipfian_slow_query_log
+                    ADD COLUMN pool_wait_ms DOUBLE PRECISION;
+                END IF;
+            END $$;
         """)
         
         # ✅ V5.3: Add missing columns to zipfian_slow_query_log if they don't exist
@@ -1136,15 +1177,20 @@ def persist_results(conn, hot_pct, results):
     conn.commit()
 
 def persist_query_timings(conn, run_id, request_id, request_idx, fetch_mode, parallel_workers, hot_traffic_pct, query_timings, entity_hot_sets, request_latency_ms=None):
-    """Persist SLOW query samples to log for tail amplification analysis."""
+    """Persist SLOW query samples (per-table, per-entity, per-request) to log for tail amplification analysis."""
     if not query_timings:
         return
 
     with conn.cursor() as cur:
         for timing in query_timings:
-            entity = timing["entity"]
-            hash_key = timing["hash_key"]
-            was_hot_key = hash_key in entity_hot_sets.get(entity, set())
+            entity = timing.get("entity", "N/A")
+            hash_key = timing.get("hash_key", "N/A")
+            event_type = timing.get("event_type", "table_query")
+            
+            # For table_query events, check if key was hot
+            was_hot_key = None
+            if event_type == "table_query" and entity != "N/A" and hash_key != "N/A":
+                was_hot_key = hash_key in entity_hot_sets.get(entity, set())
 
             query_group = timing.get("query_group")
             query_type = timing.get("query_type", "single_select")
@@ -1165,8 +1211,11 @@ def persist_query_timings(conn, run_id, request_id, request_idx, fetch_mode, par
                     rows_returned,
                     query_group,
                     query_type,
-                    request_latency_ms
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    request_latency_ms,
+                    event_type,
+                    queries_count,
+                    pool_wait_ms
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 run_id,
                 fetch_mode,
@@ -1174,7 +1223,7 @@ def persist_query_timings(conn, run_id, request_id, request_idx, fetch_mode, par
                 hot_traffic_pct,
                 request_idx,
                 request_id,
-                timing["entity"],
+                entity,
                 timing.get("table", "N/A"),
                 hash_key,
                 was_hot_key,
@@ -1182,7 +1231,10 @@ def persist_query_timings(conn, run_id, request_id, request_idx, fetch_mode, par
                 timing.get("rows_returned", 0),
                 query_group,
                 query_type,
-                request_latency_ms
+                request_latency_ms,
+                event_type,
+                timing.get("queries_count"),
+                timing.get("pool_wait_ms")
             ))
 
 def persist_keys_per_run(conn, run_id, entity_keys):
@@ -1399,11 +1451,11 @@ def fetch_features_for_request(conn, entities_with_keys, iteration_idx=0, sample
 
     Notes:
     - No inline EXPLAIN (measured execution only).
-    - Logs only slow queries for later diagnostics.
+    - Logs slow table queries (per-table), slow entities (per-entity), and slow requests (per-request).
     """
     entity_timings = {}
     gantt_data = []
-    query_timings = []
+    query_timings = []  # Collects per-table slow events
     query_errors = 0
     rows_returned_total = 0
     payload_size_bytes_total = 0
@@ -1429,8 +1481,10 @@ def fetch_features_for_request(conn, entities_with_keys, iteration_idx=0, sample
                     table_end = time.perf_counter()
                     query_latency_ms = (table_end - table_start) * 1000
 
+                    # ✅ Log per-table slow query events
                     if log_query_timings and query_latency_ms >= SLOW_QUERY_THRESHOLD_MS:
                         query_timings.append({
+                            "event_type": "table_query",
                             "entity": entity_info["entity"],
                             "table": table,
                             "hash_key": entity_info["hashkey"],
@@ -1447,7 +1501,23 @@ def fetch_features_for_request(conn, entities_with_keys, iteration_idx=0, sample
                         print(f"         ⚠️  Query failed: {table[:50]}... | {str(e)[:80]}")
 
             entity_end = time.perf_counter()
-            entity_timings[entity_info["entity"]] = (entity_end - entity_start) * 1000
+            entity_latency_ms = (entity_end - entity_start) * 1000
+            entity_timings[entity_info["entity"]] = entity_latency_ms
+
+            # ✅ Log slow entity events (entity wall-clock in serial = entity DB time, no pool wait)
+            if log_query_timings and entity_latency_ms >= ENTITY_SLOW_THRESHOLD_MS:
+                query_timings.append({
+                    "event_type": "entity",
+                    "entity": entity_info["entity"],
+                    "table": "N/A",
+                    "hash_key": "N/A",
+                    "latency_ms": entity_latency_ms,
+                    "queries_count": len(entity_info["tables"]),
+                    "pool_wait_ms": 0.0,  # Serial has no pool wait
+                    "rows_returned": None,
+                    "query_type": "entity_aggregate",
+                    "query_group": None
+                })
 
             gantt_data.append({
                 "entity": entity_info["entity"],
@@ -1515,8 +1585,10 @@ def fetch_entity_binpacked(conn, entity, hashkey, tables, log_slow_queries=False
                 results.extend(result)
 
             group_latency_ms = (time.perf_counter() - group_start) * 1000
+            # ✅ Log per-table (feature-group) slow events
             if log_slow_queries and group_latency_ms >= slow_threshold_ms:
                 group_timings.append({
+                    "event_type": "table_query",  # Per-feature-group query
                     "entity": entity,
                     "table": f"{entity}_{feature_type}_group",
                     "hash_key": hashkey,
@@ -1555,7 +1627,23 @@ def fetch_features_binpacked_serial(conn, entities_with_keys, iteration_idx=0, r
         query_timings.extend(group_timings)
 
         entity_end = time.perf_counter()
-        entity_timings[entity_info["entity"]] = (entity_end - entity_start) * 1000
+        entity_latency_ms = (entity_end - entity_start) * 1000
+        entity_timings[entity_info["entity"]] = entity_latency_ms
+        
+        # ✅ Log slow entity events (binpacked serial: entity wall-clock = entity DB time, no pool wait)
+        if log_query_timings and entity_latency_ms >= ENTITY_SLOW_THRESHOLD_MS:
+            query_timings.append({
+                "event_type": "entity",
+                "entity": entity_info["entity"],
+                "table": "N/A",
+                "hash_key": "N/A",
+                "latency_ms": entity_latency_ms,
+                "queries_count": queries_executed,
+                "pool_wait_ms": 0.0,  # Binpacked serial has no pool wait
+                "rows_returned": None,
+                "query_type": "entity_aggregate",
+                "query_group": None
+            })
 
         gantt_data.append({
             "entity": entity_info["entity"],
@@ -2061,13 +2149,29 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
 
                         request_latency_ms = sum(entity_timings.values()) if entity_timings else 0
                         all_pool_wait_times.append(0)  # Serial has no pool wait
+                        
+                        # ✅ Add request-level slow event if request exceeds threshold
+                        if log_timings and request_latency_ms >= REQUEST_SLOW_THRESHOLD_MS:
+                            query_timings.append({
+                                "event_type": "request",
+                                "entity": "N/A",
+                                "table": "N/A",
+                                "hash_key": "N/A",
+                                "latency_ms": request_latency_ms,
+                                "queries_count": queries_count,
+                                "pool_wait_ms": 0.0,
+                                "rows_returned": None,
+                                "query_type": "request_aggregate",
+                                "query_group": None
+                            })
+                        
                         if log_timings and query_timings:
                             persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
                             slow_query_count += len(query_timings)
                             if slow_query_count >= SLOW_QUERY_BATCH_SIZE:
                                 conn.commit()
                                 if i < 3:
-                                    print(f"            ✅ Committed {slow_query_count} slow queries")
+                                    print(f"            ✅ Committed {slow_query_count} slow events")
                                 slow_query_count = 0
 
                     elif current_mode == "binpacked":
@@ -2079,13 +2183,29 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
 
                         request_latency_ms = sum(entity_timings.values()) if entity_timings else 0
                         all_pool_wait_times.append(0)  # Binpacked has no pool wait
+                        
+                        # ✅ Add request-level slow event if request exceeds threshold
+                        if log_timings and request_latency_ms >= REQUEST_SLOW_THRESHOLD_MS:
+                            query_timings.append({
+                                "event_type": "request",
+                                "entity": "N/A",
+                                "table": "N/A",
+                                "hash_key": "N/A",
+                                "latency_ms": request_latency_ms,
+                                "queries_count": queries_count,
+                                "pool_wait_ms": 0.0,
+                                "rows_returned": None,
+                                "query_type": "request_aggregate",
+                                "query_group": None
+                            })
+                        
                         if log_timings and query_timings:
                             persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
                             slow_query_count += len(query_timings)
                             if slow_query_count >= SLOW_QUERY_BATCH_SIZE:
                                 conn.commit()
                                 if i < 3:
-                                    print(f"            ✅ Committed {slow_query_count} slow queries")
+                                    print(f"            ✅ Committed {slow_query_count} slow events")
                                 slow_query_count = 0
 
                     elif current_mode == "binpacked_parallel":
@@ -2105,14 +2225,47 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                         max_pool_wait = max(entity_pool_waits.values()) if entity_pool_waits else 0
                         all_pool_wait_times.append(max_pool_wait)
                         
-                        # ✅ V5.3: Persist slow feature-group queries for parallel mode
+                        # ✅ Add entity-level slow events for parallel mode (includes pool wait)
+                        if log_timings:
+                            for entity, wall_clock_ms in entity_wall_clock_timings.items():
+                                if wall_clock_ms >= ENTITY_SLOW_THRESHOLD_MS:
+                                    pool_wait_for_entity = entity_pool_waits.get(entity, 0.0)
+                                    query_timings.append({
+                                        "event_type": "entity",
+                                        "entity": entity,
+                                        "table": "N/A",
+                                        "hash_key": "N/A",
+                                        "latency_ms": wall_clock_ms,
+                                        "queries_count": len([e for e in entities_for_request if e["entity"] == entity][0]["tables"]),
+                                        "pool_wait_ms": pool_wait_for_entity,
+                                        "rows_returned": None,
+                                        "query_type": "entity_aggregate",
+                                        "query_group": None
+                                    })
+                        
+                        # ✅ Add request-level slow event if request exceeds threshold
+                        if log_timings and request_latency_ms >= REQUEST_SLOW_THRESHOLD_MS:
+                            query_timings.append({
+                                "event_type": "request",
+                                "entity": "N/A",
+                                "table": "N/A",
+                                "hash_key": "N/A",
+                                "latency_ms": request_latency_ms,
+                                "queries_count": queries_count,
+                                "pool_wait_ms": max_pool_wait,
+                                "rows_returned": None,
+                                "query_type": "request_aggregate",
+                                "query_group": None
+                            })
+                        
+                        # ✅ V5.3: Persist slow feature-group queries + entity + request events for parallel mode
                         if log_timings and query_timings:
                             persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
                             slow_query_count += len(query_timings)
                             if slow_query_count >= SLOW_QUERY_BATCH_SIZE:
                                 conn.commit()
                                 if i < 3:
-                                    print(f"            ✅ Committed {slow_query_count} slow queries")
+                                    print(f"            ✅ Committed {slow_query_count} slow events")
                                 slow_query_count = 0
 
                     elif current_mode == "rpc_request_json":
@@ -2220,12 +2373,30 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                 recent_avg = np.mean(latencies[-100:]) if len(latencies) >= 100 else np.mean(latencies)
                 print(f"         Progress: {pct:.0f}% ({i+1}/{ITERATIONS_PER_RUN}) | Recent avg: {recent_avg:.1f}ms")
 
-        # Final commit for both slow queries and request timing
+        # Final commit for slow events and request timing
         conn.commit()
+        
+        # ✅ Sanity check: Count slow events by type
         if slow_query_count > 0:
-            print(f"         ✅ Final commit: {slow_query_count} slow queries + {ITERATIONS_PER_RUN} requests logged")
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT 
+                        event_type,
+                        COUNT(*) as count
+                    FROM {RESULTS_SCHEMA}.zipfian_slow_query_log
+                    WHERE run_id = %s AND mode = %s AND hot_traffic_pct = %s
+                    GROUP BY event_type
+                    ORDER BY event_type
+                """, (RUN_ID, current_mode, hot_pct))
+                event_counts = dict(cur.fetchall())
+                
+                print(f"         ✅ Final commit: {ITERATIONS_PER_RUN} requests logged")
+                print(f"         📊 Slow events breakdown:")
+                print(f"            - Table queries: {event_counts.get('table_query', 0)}")
+                print(f"            - Entities: {event_counts.get('entity', 0)}")
+                print(f"            - Requests: {event_counts.get('request', 0)}")
         else:
-            print(f"         ✅ Final commit: {ITERATIONS_PER_RUN} requests logged")
+            print(f"         ✅ Final commit: {ITERATIONS_PER_RUN} requests logged (no slow events)")
 
         io_after_reads, io_after_hits = read_pg_io_stats(conn)
         io_blocks_read_aggregate = io_after_reads - io_before_reads
