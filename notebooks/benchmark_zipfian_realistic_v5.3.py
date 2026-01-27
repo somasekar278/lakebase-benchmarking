@@ -1514,6 +1514,18 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
 
             latencies.append(latency_ms)
             cache_scores.append(hot_entities / len(ENTITY_NAMES))
+            
+            # ✅ V5.3: Log every request to zipfian_request_timing for tail amplification analysis
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    INSERT INTO {RESULTS_SCHEMA}.zipfian_request_timing 
+                    (run_id, mode, parallel_workers, hot_traffic_pct, iteration_id, request_id, request_latency_ms)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (RUN_ID, current_mode, current_workers, hot_pct, i, request_id, latency_ms))
+            
+            # Commit request timing periodically (every 100 requests)
+            if (i + 1) % 100 == 0:
+                conn.commit()
 
             for entity, timing_ms in entity_timings.items():
                 entity_latency[entity].append(timing_ms)
@@ -1523,9 +1535,12 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                 recent_avg = np.mean(latencies[-100:]) if len(latencies) >= 100 else np.mean(latencies)
                 print(f"         Progress: {pct:.0f}% ({i+1}/{ITERATIONS_PER_RUN}) | Recent avg: {recent_avg:.1f}ms")
 
+        # Final commit for both slow queries and request timing
+        conn.commit()
         if slow_query_count > 0:
-            conn.commit()
-            print(f"         ✅ Final slow query log commit: {slow_query_count} queries logged")
+            print(f"         ✅ Final commit: {slow_query_count} slow queries + {ITERATIONS_PER_RUN} requests logged")
+        else:
+            print(f"         ✅ Final commit: {ITERATIONS_PER_RUN} requests logged")
 
         io_after_reads, io_after_hits = read_pg_io_stats(conn)
         io_blocks_read_aggregate = io_after_reads - io_before_reads
