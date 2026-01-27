@@ -1252,14 +1252,31 @@ if 'entity_timing_detail' in df.columns:
                 serial_sample = gantt_serial[0]['entities']
                 parallel_sample = gantt_parallel[0]['entities']
                 
-                # Calculate total wall-clock times
+                # Detect if we have segmented data (V5.4+) or legacy data (V5.3)
+                has_segments = any('segment' in e for e in parallel_sample)
+                
+                if has_segments:
+                    # V5.4+ segmented data: group by entity, separate pool_wait and db_exec
+                    from collections import defaultdict
+                    parallel_by_entity = defaultdict(list)
+                    for seg in parallel_sample:
+                        parallel_by_entity[seg['entity']].append(seg)
+                    
+                    # Calculate total wall-clock per entity (pool_wait + db_exec)
+                    parallel_wall_clock = max(
+                        max(s['end_ms'] for s in segs) 
+                        for segs in parallel_by_entity.values()
+                    )
+                else:
+                    # V5.3 legacy data: single bar per entity
+                    parallel_wall_clock = max(e['end_ms'] for e in parallel_sample)
+                
                 serial_wall_clock = max(e['end_ms'] for e in serial_sample)
-                parallel_wall_clock = max(e['end_ms'] for e in parallel_sample)
                 speedup = serial_wall_clock / parallel_wall_clock if parallel_wall_clock > 0 else 0
                 
                 fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10))
                 
-                # Serial execution (top panel)
+                # Serial execution (top panel) - always single bars
                 y_pos = 0
                 for entity_data in serial_sample:
                     ax1.barh(y_pos, 
@@ -1282,25 +1299,82 @@ if 'entity_timing_detail' in df.columns:
                 ax1.grid(True, alpha=0.3, axis='x')
                 ax1.set_xlim(0, serial_wall_clock * 1.15)
                 
-                # Parallel execution (bottom panel)
-                y_pos = 0
-                for entity_data in parallel_sample:
-                    ax2.barh(y_pos, 
-                            entity_data['end_ms'] - entity_data['start_ms'], 
-                            left=entity_data['start_ms'],
-                            height=0.6,
-                            color=COLORS['lakebase'],
-                            edgecolor='black',
-                            linewidth=1.5)
-                    ax2.text(entity_data['end_ms'] + 1, y_pos, 
-                            f"{entity_data['end_ms'] - entity_data['start_ms']:.1f}ms",
-                            va='center', fontsize=10, fontweight='bold')
-                    y_pos += 1
+                # Parallel execution (bottom panel) - segmented or single bars
+                if has_segments:
+                    # V5.4+: Render segmented bars (pool_wait + db_exec)
+                    entity_list = sorted(parallel_by_entity.keys())
+                    y_pos = 0
+                    for entity in entity_list:
+                        segments = sorted(parallel_by_entity[entity], key=lambda s: s['start_ms'])
+                        for seg in segments:
+                            duration = seg['end_ms'] - seg['start_ms']
+                            if seg['segment'] == 'pool_wait':
+                                # Pool wait: lighter yellow/orange with transparency, dashed border
+                                color = (251/255, 191/255, 36/255, 0.4)  # RGBA tuple
+                                edgecolor = '#F59E0B'
+                                linestyle = '--'
+                                linewidth = 2
+                            else:  # db_exec
+                                # DB exec: solid blue (lakebase brand)
+                                color = COLORS['lakebase']
+                                edgecolor = 'black'
+                                linestyle = '-'
+                                linewidth = 1.5
+                            
+                            ax2.barh(y_pos, duration, left=seg['start_ms'],
+                                    height=0.6, color=color, edgecolor=edgecolor,
+                                    linewidth=linewidth, linestyle=linestyle)
+                        
+                        # Label total time at end of entity
+                        total_end = max(s['end_ms'] for s in segments)
+                        total_start = min(s['start_ms'] for s in segments)
+                        ax2.text(total_end + 1, y_pos, 
+                                f"{total_end - total_start:.1f}ms",
+                                va='center', fontsize=10, fontweight='bold')
+                        y_pos += 1
+                    
+                    ax2.set_yticks(range(len(entity_list)))
+                    ax2.set_yticklabels(entity_list)
+                    
+                    # Add legend for segmented view
+                    from matplotlib.patches import Patch
+                    legend_elements = [
+                        Patch(facecolor=(251/255, 191/255, 36/255, 0.4), edgecolor='#F59E0B', 
+                              linestyle='--', linewidth=2, label='Pool wait'),
+                        Patch(facecolor=COLORS['lakebase'], edgecolor='black', 
+                              linestyle='-', linewidth=1.5, label='DB execution')
+                    ]
+                    ax2.legend(handles=legend_elements, loc='upper right', fontsize=10)
+                    
+                else:
+                    # V5.3: Single bar per entity (backward compatible)
+                    y_pos = 0
+                    for entity_data in parallel_sample:
+                        ax2.barh(y_pos, 
+                                entity_data['end_ms'] - entity_data['start_ms'], 
+                                left=entity_data['start_ms'],
+                                height=0.6,
+                                color=COLORS['lakebase'],
+                                edgecolor='black',
+                                linewidth=1.5)
+                        ax2.text(entity_data['end_ms'] + 1, y_pos, 
+                                f"{entity_data['end_ms'] - entity_data['start_ms']:.1f}ms",
+                                va='center', fontsize=10, fontweight='bold')
+                        y_pos += 1
+                    
+                    ax2.set_yticks(range(len(parallel_sample)))
+                    ax2.set_yticklabels([e['entity'] for e in parallel_sample])
                 
-                ax2.set_yticks(range(len(parallel_sample)))
-                ax2.set_yticklabels([e['entity'] for e in parallel_sample])
+                # Axes config for parallel panel
                 ax2.set_xlabel('Time (ms)', fontsize=12, fontweight='bold')
-                ax2.set_title(f'🟢 Parallel Execution (3 workers) | 10 binpacked queries | Wall-clock: {parallel_wall_clock:.1f}ms | Speedup: {speedup:.1f}×', 
+                
+                # Title reflects whether we have segmented data
+                if has_segments:
+                    title_suffix = f'Wall-clock (pool wait + DB): {parallel_wall_clock:.1f}ms | Speedup: {speedup:.1f}×'
+                else:
+                    title_suffix = f'Wall-clock: {parallel_wall_clock:.1f}ms | Speedup: {speedup:.1f}×'
+                
+                ax2.set_title(f'🟢 Parallel Execution (3 workers) | 10 binpacked queries | {title_suffix}', 
                              fontsize=14, fontweight='bold', pad=10)
                 ax2.grid(True, alpha=0.3, axis='x')
                 ax2.set_xlim(0, serial_wall_clock * 1.15)  # Use same scale for fair comparison
