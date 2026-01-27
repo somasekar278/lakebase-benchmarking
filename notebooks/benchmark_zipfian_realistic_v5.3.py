@@ -1235,8 +1235,11 @@ def fetch_features_binpacked_serial(conn, entities_with_keys, iteration_idx=0, r
 
 pool = None  # initialized per-mode inside benchmark
 
-def fetch_entity_worker(entity_info, request_start):
-    """Worker function for parallel entity fetch."""
+def fetch_entity_worker(entity_info, request_start, log_query_timings=False, slow_threshold_ms=40):
+    """Worker function for parallel entity fetch.
+    
+    ✅ V5.3: Now logs slow feature-group queries for parallel mode
+    """
     pool_wait_start = time.perf_counter()
     with pool.connection() as conn:  # type: ignore
         pool_wait_ms = (time.perf_counter() - pool_wait_start) * 1000
@@ -1244,13 +1247,13 @@ def fetch_entity_worker(entity_info, request_start):
             print(f"         ⚠️  Slow pool acquisition: {pool_wait_ms:.0f}ms for {entity_info['entity']}")
 
         entity_start = time.perf_counter()
-        results, queries_executed, _ = fetch_entity_binpacked(
+        results, queries_executed, group_timings = fetch_entity_binpacked(
             conn,
             entity_info["entity"],
             entity_info["hashkey"],
             entity_info["tables"],
-            log_slow_queries=False,
-            slow_threshold_ms=40
+            log_slow_queries=log_query_timings,
+            slow_threshold_ms=slow_threshold_ms
         )
         _ = results  # results not used beyond fetch timing; retained for correctness
         entity_end = time.perf_counter()
@@ -1262,10 +1265,13 @@ def fetch_entity_worker(entity_info, request_start):
             "end_ms": (entity_end - request_start) * 1000
         }
 
-        return entity_info["entity"], latency_ms, gantt_entry, queries_executed, pool_wait_ms
+        return entity_info["entity"], latency_ms, gantt_entry, queries_executed, pool_wait_ms, group_timings
 
-def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_workers=3, request_start=None, log_query_timings=False):
-    """Fetch features using bin-packed queries with parallel execution."""
+def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_workers=3, request_start=None, log_query_timings=False, slow_threshold_ms=40):
+    """Fetch features using bin-packed queries with parallel execution.
+    
+    ✅ V5.3: Now aggregates slow feature-group queries from parallel workers
+    """
     entity_timings = {}
     gantt_data = []
     query_timings = []
@@ -1276,13 +1282,17 @@ def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_w
         request_start = time.perf_counter()
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(fetch_entity_worker, entity_info, request_start) for entity_info in entities_with_keys]
+        futures = [
+            executor.submit(fetch_entity_worker, entity_info, request_start, log_query_timings, slow_threshold_ms) 
+            for entity_info in entities_with_keys
+        ]
         for future in futures:
-            entity, latency_ms, gantt_entry, queries_executed, pool_wait_ms = future.result()
+            entity, latency_ms, gantt_entry, queries_executed, pool_wait_ms, group_timings = future.result()
             entity_timings[entity] = latency_ms
             gantt_data.append(gantt_entry)
             total_queries += queries_executed
             pool_wait_times.append(pool_wait_ms)
+            query_timings.extend(group_timings)  # ✅ Aggregate slow queries from all workers
 
     return entity_timings, 0, gantt_data, query_timings, total_queries, pool_wait_times
 
@@ -1457,9 +1467,22 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
 
                     elif current_mode == "binpacked_parallel":
                         entity_timings, io_blocks, gantt_data, query_timings, queries_count, pool_wait_times = fetch_features_binpacked_parallel(
-                            entities_for_request, i, current_workers, request_start, log_timings
+                            entities_for_request, i, current_workers, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS
                         )
                         total_queries_executed += queries_count
+                        
+                        # ✅ V5.3: Calculate request latency (max for parallel mode)
+                        request_latency_ms = max(entity_timings.values()) if entity_timings else 0
+                        
+                        # ✅ V5.3: Persist slow feature-group queries for parallel mode
+                        if log_timings and query_timings:
+                            persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
+                            slow_query_count += len(query_timings)
+                            if slow_query_count >= SLOW_QUERY_BATCH_SIZE:
+                                conn.commit()
+                                if i < 3:
+                                    print(f"            ✅ Committed {slow_query_count} slow queries")
+                                slow_query_count = 0
 
                     if i < GANTT_SAMPLE_SIZE:
                         gantt_samples.append({

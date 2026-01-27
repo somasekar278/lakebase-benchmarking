@@ -1806,11 +1806,15 @@ except Exception as e:
 
 # COMMAND ----------
 
-# Chart 6: Tail Amplification Probability (Optional 5th chart)
-print("📊 Chart 6: Tail Amplification Probability...")
+# Chart 6: Tail Amplification Probability (Serial-Only)
+print("📊 Chart 6: Tail Amplification Probability (Serial-only)...")
 
 # Query slow query log to calculate P(request has ≥1 slow query)
-# Note: This requires the slow_query_log table to be populated
+# ✅ DESIGN DECISION: This chart is Serial-only by design
+# - In serial mode, "≥1 slow query" directly causes tail because latency = Σ(queries)
+# - In parallel mode, the critical path (max entity) dominates, not individual slow queries
+# - Parallel mode DOES log slow feature-group queries for diagnostics, but we don't chart "≥1 slow"
+#   because it's not the right mental model (engineers should focus on critical-path entity instead)
 slow_query_query = f"""
     SELECT 
         mode,
@@ -1821,6 +1825,7 @@ slow_query_query = f"""
          NULLIF(COUNT(DISTINCT request_id)::FLOAT, 0) * 100) as tail_amplification_pct
     FROM features.zipfian_slow_query_log
     WHERE run_id = '{RUN_ID}'
+      AND mode = 'serial'  -- ✅ Intentionally Serial-only
     GROUP BY mode, hot_traffic_pct
     HAVING COUNT(DISTINCT request_id) > 0
     ORDER BY mode, hot_traffic_pct DESC
