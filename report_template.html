@@ -4130,6 +4130,107 @@ gantt_data.append({
         </div>
       </div>
 
+      <!-- Cost vs Fan-out Chart -->
+      <div class="content-card">
+        <h3 class="card-title">Marginal DB cost vs fan-out (per 1k requests)</h3>
+        
+        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px; align-items: start;">
+          <!-- Chart -->
+          <div>
+            <div style="margin-top: 20px;">
+              <!-- Y-axis label -->
+              <div style="font-size: 11px; color: #6B7280; text-align: center; margin-bottom: 12px; font-weight: 600;">
+                Estimated DB cost per 1k requests ($)
+              </div>
+              
+              <!-- Chart bars -->
+              <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 16px;">
+                <!-- Serial (30 queries) -->
+                <div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="min-width: 140px; font-size: 13px; color: var(--muted); font-weight: 500;">Serial (30 queries)</div>
+                    <div style="flex: 1; position: relative;">
+                      <div style="background: linear-gradient(90deg, #DC2626, #EF4444); height: 32px; border-radius: 4px; width: 100%; box-shadow: 0 2px 4px rgba(220,38,38,0.2);"></div>
+                      <div style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: white; font-size: 12px; font-weight: 700;">$0.0195</div>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Bin-packed (10 queries) -->
+                <div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="min-width: 140px; font-size: 13px; color: var(--muted); font-weight: 500;">Bin-packed (10 queries)</div>
+                    <div style="flex: 1; position: relative;">
+                      <div style="background: linear-gradient(90deg, #F59E0B, #FBBF24); height: 32px; border-radius: 4px; width: 68%; box-shadow: 0 2px 4px rgba(245,158,11,0.2);"></div>
+                      <div style="position: absolute; right: calc(32% + 8px); top: 50%; transform: translateY(-50%); color: white; font-size: 12px; font-weight: 700;">$0.0130</div>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- RPC × Entity (3 calls) -->
+                <div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="min-width: 140px; font-size: 13px; color: var(--muted); font-weight: 500;">RPC × Entity (3 calls)</div>
+                    <div style="flex: 1; position: relative;">
+                      <div style="background: linear-gradient(90deg, #3B82F6, #60A5FA); height: 32px; border-radius: 4px; width: 38%; box-shadow: 0 2px 4px rgba(59,130,246,0.2);"></div>
+                      <div style="position: absolute; right: calc(62% + 8px); top: 50%; transform: translateY(-50%); color: white; font-size: 12px; font-weight: 700;">$0.0074</div>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- RPC (1 call) -->
+                <div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="min-width: 140px; font-size: 13px; color: var(--muted); font-weight: 500;">RPC (1 call)</div>
+                    <div style="flex: 1; position: relative;">
+                      <div style="background: linear-gradient(90deg, #10B981, #34D399); height: 32px; border-radius: 4px; width: 35%; box-shadow: 0 2px 4px rgba(16,185,129,0.2);"></div>
+                      <div style="position: absolute; right: calc(65% + 8px); top: 50%; transform: translateY(-50%); color: white; font-size: 12px; font-weight: 700;">$0.0068</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Caption -->
+            <div style="margin-top: 20px; padding: 12px 16px; background: var(--surface-2); border-radius: 6px; border-left: 3px solid var(--brand-2);">
+              <p style="font-size: 12px; line-height: 1.6; color: var(--muted); margin: 0;">
+                Illustrative marginal DB cost assuming identical storage footprint and sustained 500 QPS.
+                Relative differences driven primarily by query fan-out.
+              </p>
+            </div>
+          </div>
+          
+          <!-- Assumptions box -->
+          <div style="background: rgba(124,58,237,0.08); border: 1px solid rgba(124,58,237,0.25); border-radius: 8px; padding: 16px;">
+            <h4 style="font-size: 13px; font-weight: 700; color: var(--brand-2); margin: 0 0 12px 0; text-transform: uppercase; letter-spacing: 0.05em;">
+              Cost Assumptions
+            </h4>
+            <ul style="list-style: none; padding: 0; margin: 0; font-size: 12px; line-height: 1.8; color: var(--muted);">
+              <li style="padding-left: 16px; position: relative; margin-bottom: 6px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                30 CU steady state
+              </li>
+              <li style="padding-left: 16px; position: relative; margin-bottom: 6px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                6 TB database storage
+              </li>
+              <li style="padding-left: 16px; position: relative; margin-bottom: 6px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                $0.52 / DBU-hr compute
+              </li>
+              <li style="padding-left: 16px; position: relative; margin-bottom: 6px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                $0.345 / GB-month storage
+              </li>
+              <li style="padding-left: 16px; position: relative;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                Database-side cost only
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       <!-- Takeaway -->
       <div class="callout callout--accent" style="margin-bottom: 0;">
         <h3>Methodology summary</h3>
