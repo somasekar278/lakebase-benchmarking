@@ -149,3 +149,93 @@ resources:
           - ${workspace.current_user.userName}
         on_success:
           - ${workspace.current_user.userName}
+    
+    # RPC MODE MINI TEST (V5.4) - Quick 10-iteration validation
+    rpc_mode_test:
+      name: "[${bundle.target}] RPC Mode Mini Test (10 iterations)"
+      description: "Quick test of rpc_request_json mode with 10 iterations + visualization"
+      
+      tasks:
+        - task_key: run_rpc_benchmark
+          description: "Task 1: Run RPC Mode Benchmark (10 iterations)"
+          existing_cluster_id: "0120-120746-h595w64t"
+          
+          notebook_task:
+            notebook_path: ../notebooks/benchmark_zipfian_realistic_v5.4.py
+            base_parameters:
+              lakebase_host: ${var.lakebase_host}
+              lakebase_database: ${var.lakebase_database}
+              lakebase_schema: ${var.lakebase_schema}
+              lakebase_user: ${var.lakebase_user}
+              lakebase_password: ${var.lakebase_password}
+              fetch_mode: "rpc_request_json"
+              run_all_modes: "false"
+              iterations_per_run: "10"
+              hot_key_percent: "1"
+              log_query_timings: "false"
+          
+          libraries:
+            - pypi:
+                package: psycopg[binary,pool]
+            - pypi:
+                package: numpy
+            - pypi:
+                package: pandas
+            - pypi:
+                package: matplotlib
+            - pypi:
+                package: seaborn
+          
+          timeout_seconds: 1800  # 30 minutes max
+          max_retries: 0
+        
+        - task_key: generate_visualizations
+          description: "Task 2: Generate Visualizations with RPC Mode"
+          depends_on:
+            - task_key: run_rpc_benchmark
+          existing_cluster_id: "0120-120746-h595w64t"
+          
+          notebook_task:
+            notebook_path: ../notebooks/zipfian_benchmark_visuals.py
+            base_parameters:
+              lakebase_host: ${var.lakebase_host}
+              lakebase_database: ${var.lakebase_database}
+              lakebase_user: ${var.lakebase_user}
+              lakebase_password: ${var.lakebase_password}
+              run_id: "latest"
+              results_table: "v5"
+          
+          libraries:
+            - pypi:
+                package: psycopg[binary,pool]
+            - pypi:
+                package: numpy
+            - pypi:
+                package: pandas
+            - pypi:
+                package: matplotlib
+            - pypi:
+                package: seaborn
+            - pypi:
+                package: plotly
+            - pypi:
+                package: kaleido
+            - pypi:
+                package: jinja2
+          
+          timeout_seconds: 1800  # 30 minutes max
+          max_retries: 0
+      
+      max_concurrent_runs: 1
+      
+      tags:
+        Environment: ${bundle.target}
+        Project: fraud-benchmarking
+        Type: test
+        Mode: rpc_request_json
+      
+      email_notifications:
+        on_failure:
+          - ${workspace.current_user.userName}
+        on_success:
+          - ${workspace.current_user.userName}
