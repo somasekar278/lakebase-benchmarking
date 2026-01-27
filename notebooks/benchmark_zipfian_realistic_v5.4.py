@@ -905,7 +905,7 @@ def ensure_entity_rpc_functions(conn):
             CREATE OR REPLACE FUNCTION {SCHEMA}.fetch_features_card_fingerprint(
                 hash_key_param TEXT,
                 run_id_param TEXT DEFAULT NULL,
-                req_id_param BIGINT DEFAULT NULL
+                req_id_param TEXT DEFAULT NULL
             ) RETURNS JSONB
             LANGUAGE sql
             STABLE
@@ -939,7 +939,7 @@ def ensure_entity_rpc_functions(conn):
             CREATE OR REPLACE FUNCTION {SCHEMA}.fetch_features_customer_email(
                 hash_key_param TEXT,
                 run_id_param TEXT DEFAULT NULL,
-                req_id_param BIGINT DEFAULT NULL
+                req_id_param TEXT DEFAULT NULL
             ) RETURNS JSONB
             LANGUAGE sql
             STABLE
@@ -973,7 +973,7 @@ def ensure_entity_rpc_functions(conn):
             CREATE OR REPLACE FUNCTION {SCHEMA}.fetch_features_cardholder_name(
                 hash_key_param TEXT,
                 run_id_param TEXT DEFAULT NULL,
-                req_id_param BIGINT DEFAULT NULL
+                req_id_param TEXT DEFAULT NULL
             ) RETURNS JSONB
             LANGUAGE sql
             STABLE
