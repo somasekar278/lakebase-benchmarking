@@ -124,7 +124,9 @@ EXPLAIN_SAMPLE_RATE = int(dbutils.widgets.get("explain_sample_rate") or "0")  # 
 RUN_ALL_MODES = (dbutils.widgets.get("run_all_modes") or "true") == "true"
 FETCH_MODE = dbutils.widgets.get("fetch_mode") or "serial"
 REUSE_RUN_ID = (dbutils.widgets.get("reuse_run_id") or "").strip()
-PARALLEL_WORKERS_STR = dbutils.widgets.get("parallel_workers") or "1,2,3,4"
+# ✅ Gotcha #4: Remove worker=1 (degenerate case for 3-entity parallelism)
+# With 3 entities, 1 worker serializes execution + adds pool overhead → always worse than serial
+PARALLEL_WORKERS_STR = dbutils.widgets.get("parallel_workers") or "2,3,4"
 PARALLEL_WORKERS = [int(w.strip()) for w in PARALLEL_WORKERS_STR.split(",") if w.strip()]
 LOG_QUERY_TIMINGS = (dbutils.widgets.get("log_query_timings") or "true") == "true"
 SLOW_QUERY_THRESHOLD_MS = float(dbutils.widgets.get("slow_query_threshold_ms") or "40")
