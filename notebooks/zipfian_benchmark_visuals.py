@@ -2287,9 +2287,22 @@ for chart_key, src_path in chart_files.items():
 # 3. Get best results (80% hot = production scenario)
 results_80 = df[df['hot_traffic_pct'] == 80].to_dict('records')
 
-# ✅ Clean results_80 list to ensure all values are safe for formatting
+# ✅ Clean results_80 list to ensure all values are safe for formatting and JSON serialization
 if results_80:
     for r in results_80:
+        # Convert Timestamps to strings
+        for key, value in list(r.items()):
+            if isinstance(value, pd.Timestamp):
+                r[key] = value.isoformat()
+            elif isinstance(value, (np.integer, np.int64)):
+                r[key] = int(value)
+            elif isinstance(value, (np.floating, np.float64)):
+                if np.isnan(value):
+                    r[key] = 0
+                else:
+                    r[key] = float(value)
+        
+        # Clean numeric columns
         for key in numeric_columns:
             if key in r and (r[key] is None or (isinstance(r[key], float) and np.isnan(r[key]))):
                 r[key] = 0
