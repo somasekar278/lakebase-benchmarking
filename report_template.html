@@ -1650,22 +1650,22 @@
       <div class="kpi-grid">
         <div class="kpi">
           <span class="kpi-label">Best P99 Achieved</span>
-          <span class="kpi-value" id="bestP99" style="color: var(--ok);">—</span>
-          <span class="kpi-sub">(computed from run)</span>
+          <span class="kpi-value" id="bestP99" style="color: var(--ok);">{{BEST_P99}}</span>
+          <span class="kpi-sub">{{BEST_P99_MODE}}</span>
         </div>
         <div class="kpi">
           <span class="kpi-label">vs Target</span>
-          <span class="kpi-value" id="improvement" style="color: var(--brand-2);">43%</span>
-          <span class="kpi-sub">faster than 79ms SLA</span>
+          <span class="kpi-value" id="improvement" style="color: var(--brand-2);">{{VS_TARGET}}</span>
+          <span class="kpi-sub">vs 79ms SLA</span>
         </div>
         <div class="kpi">
           <span class="kpi-label">Total Queries</span>
-          <span class="kpi-value" id="totalQueries">300K+</span>
+          <span class="kpi-value" id="totalQueries">{{TOTAL_QUERIES}}</span>
           <span class="kpi-sub">across all modes</span>
         </div>
         <div class="kpi">
           <span class="kpi-label">Dataset Size</span>
-          <span class="kpi-value" id="datasetSize">15K</span>
+          <span class="kpi-value" id="datasetSize">{{DATASET_SIZE}}</span>
           <span class="kpi-sub">unique keys, 3 entities</span>
         </div>
       </div>

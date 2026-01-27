@@ -3073,6 +3073,33 @@ td{padding:12px;border-bottom:1px solid #dee2e6;}
 <h3>Worst Case</h3><img src="data:image/png;base64,{{CHART_WORST}}" class="chart-embed"/>
 </div></body></html>"""
 
+# Compute hero KPIs from best P99 data
+if results_80:
+    hero_best_p99 = f"{best_p99:.1f}ms"
+    hero_best_mode = f"{best_mode} @ 80% hot"
+    hero_vs_target = f"{vs_ref:+.1f}%"
+    
+    # Compute total queries: iterations * modes * hot_pct_values
+    total_iterations = 1000
+    num_modes = len(df['fetch_mode'].unique())
+    num_hot_pcts = len(df['hot_traffic_pct'].unique())
+    total_queries_approx = total_iterations * num_modes * num_hot_pcts
+    if total_queries_approx > 1_000_000:
+        hero_total_queries = f"{total_queries_approx / 1_000_000:.1f}M+"
+    elif total_queries_approx > 1_000:
+        hero_total_queries = f"{total_queries_approx / 1_000:.0f}K+"
+    else:
+        hero_total_queries = f"{total_queries_approx:,}"
+    
+    # Dataset size from config
+    hero_dataset_size = "30K"  # 10K keys per entity * 3 entities
+else:
+    hero_best_p99 = "—"
+    hero_best_mode = "No data"
+    hero_vs_target = "—"
+    hero_total_queries = "—"
+    hero_dataset_size = "30K"
+
 # Fill placeholders (for both old and new templates)
 replacements = {
     "{{RUN_ID}}": RUN_ID,
@@ -3086,6 +3113,13 @@ replacements = {
     "{{SAMPLED_TOTAL}}": f"{summary.get('results_80_hot', [{}])[0].get('sampled_total', 0):,}" if summary.get('results_80_hot') else "N/A",
     "{{SAMPLED_UNIQUE}}": "~30,000",
     "{{DUP_RATIO}}": "~3.0x",
+    
+    # Hero KPIs (for header)
+    "{{BEST_P99}}": hero_best_p99,
+    "{{BEST_P99_MODE}}": hero_best_mode,
+    "{{VS_TARGET}}": hero_vs_target,
+    "{{TOTAL_QUERIES}}": hero_total_queries,
+    "{{DATASET_SIZE}}": hero_dataset_size,
     
     # Tables
     "{{SUMMARY_TABLE_ROWS}}": summary_rows,
