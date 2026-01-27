@@ -169,10 +169,121 @@ print()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 4️⃣ ~~Synthetic DynamoDB Latency Curve~~ (DISABLED - Not Relevant for Mode Comparison)
+# MAGIC ## 4️⃣ Global Mode Configuration (Single Source of Truth)
+# MAGIC 
+# MAGIC **Centralized configuration for all charts**
+
+# COMMAND ----------
+
+# Global mode configuration - used by ALL charts
+MODE_ORDER = ['serial', 'binpacked', 'binpacked_parallel', 'rpc_request_json']
+
+MODE_LABELS = {
+    'serial': 'Serial\n(30 queries)',
+    'binpacked': 'Bin-packed\n(10 queries)',
+    'binpacked_parallel': 'Parallel\n(10 queries, 3 workers)',
+    'rpc_request_json': 'RPC\n(1 query)'
+}
+
+MODE_LABELS_SHORT = {
+    'serial': 'Serial',
+    'binpacked': 'Bin-packed',
+    'binpacked_parallel': 'Parallel',
+    'rpc_request_json': 'RPC'
+}
+
+# Checkout.com professional color palette
+checkout_blue = '#357FF5'
+checkout_cyan = '#00D4FF'
+
+MODE_COLORS = {
+    'serial': '#94A3B8',           # Gray-blue baseline
+    'binpacked': '#60A5FA',        # Light blue
+    'binpacked_parallel': checkout_blue,  # Checkout blue
+    'rpc_request_json': checkout_cyan     # Checkout cyan
+}
+
+# Production-realistic hot traffic percentages
+PROD_HOT_PCTS = [0, 10]  # realistic production range (mostly cold/mixed traffic)
+PROD_HOT_PCT_FOR_HIGHLIGHT = 10  # reference point for "production-like" annotations
+
+def get_mode_row(df, mode, hot_pct):
+    """
+    Safely retrieve a single row for a mode/hot_pct combination.
+    
+    For binpacked_parallel: picks highest parallel_workers if multiple exist.
+    For others: picks last row by run_ts if present, else last in df order.
+    Returns None if no data exists.
+    """
+    mode_df = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == hot_pct)]
+    
+    if len(mode_df) == 0:
+        return None
+    
+    # For parallel mode, prefer highest worker count
+    if mode == 'binpacked_parallel' and 'parallel_workers' in mode_df.columns:
+        max_workers = mode_df['parallel_workers'].max()
+        mode_df = mode_df[mode_df['parallel_workers'] == max_workers]
+    
+    # Pick most recent by run_ts if available
+    if 'run_ts' in mode_df.columns and len(mode_df) > 1:
+        mode_df = mode_df.sort_values('run_ts', ascending=False)
+    
+    return mode_df.iloc[0]
+
+def select_mode_df(df, mode):
+    """
+    Standardized mode selection with intelligent worker filtering for parallel mode.
+    
+    For binpacked_parallel: prefers w=3 if present, else picks max available workers.
+    For other modes: returns all rows for that mode.
+    
+    Returns filtered dataframe for the specified mode.
+    """
+    mode_df = df[df["fetch_mode"] == mode]
+    if mode == "binpacked_parallel" and "parallel_workers" in df.columns and len(mode_df) > 0:
+        # Prefer w=3 if present, else pick max available workers
+        if (mode_df["parallel_workers"] == 3).any():
+            mode_df = mode_df[mode_df["parallel_workers"] == 3]
+        else:
+            max_workers = mode_df["parallel_workers"].max()
+            mode_df = mode_df[mode_df["parallel_workers"] == max_workers]
+    return mode_df
+
+# Debug: Show which modes have data and verify RPC presence
+print("🔍 Mode availability check:")
+rpc_data_found = False
+for mode in MODE_ORDER:
+    mode_data = df[df['fetch_mode'] == mode]
+    if len(mode_data) > 0:
+        hot_pcts = sorted(mode_data['hot_traffic_pct'].unique())
+        workers_info = ""
+        if mode == 'binpacked_parallel' and 'parallel_workers' in df.columns:
+            workers = sorted(mode_data['parallel_workers'].dropna().unique())
+            workers_info = f" | workers: {workers}"
+        print(f"   ✅ {MODE_LABELS_SHORT[mode]:15} - {len(mode_data):3} rows | hot%: {hot_pcts}{workers_info}")
+        if mode == 'rpc_request_json':
+            rpc_data_found = True
+            # Verify RPC has queries_per_request = 1
+            rpc_queries = mode_data['queries_per_request'].unique() if 'queries_per_request' in mode_data.columns else []
+            if len(rpc_queries) > 0:
+                print(f"      → RPC queries/request: {rpc_queries}")
+    else:
+        print(f"   ⚠️  {MODE_LABELS_SHORT[mode]:15} - NO DATA")
+
+if rpc_data_found:
+    print("\n✅ RPC mode data confirmed present in this run")
+else:
+    print("\n⚠️  RPC mode data NOT found - charts will show 3 modes only")
+print()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5️⃣ ~~Synthetic DynamoDB Latency Curve~~ (DISABLED - Not Relevant for Mode Comparison)
 # MAGIC 
 # MAGIC **Note:** DynamoDB comparison charts are commented out.
-# MAGIC This benchmark compares Lakebase execution modes (serial vs binpacked vs parallel).
+# MAGIC This benchmark compares Lakebase execution modes (serial vs binpacked vs parallel vs RPC).
 
 # COMMAND ----------
 
@@ -191,36 +302,28 @@ print()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5️⃣ Mode Comparison Table (FIRST VISUAL)
+# MAGIC ## 6️⃣ Mode Comparison Table (FIRST VISUAL)
 # MAGIC 
-# MAGIC **Side-by-side comparison of all 3 execution modes**
+# MAGIC **Side-by-side comparison of all execution modes**
 # MAGIC 
 # MAGIC Shows key metrics for each mode at different hot/cold ratios
 
 # COMMAND ----------
 
-# Create comparison table
-MODE_LABELS = {
-    'serial': 'Serial (30 queries)',
-    'binpacked': 'Bin-packed (10 queries)',
-    'binpacked_parallel': 'Parallel (10 queries, 3 workers)'
-}
-
-# Select key hot/cold ratios for comparison
+# Create comparison table using centralized MODE_ORDER
 comparison_ratios = [100, 80, 50, 10, 0]
 
 comparison_data = []
 for ratio in comparison_ratios:
     row_data = {'Hot %': ratio}
-    for mode in ['serial', 'binpacked', 'binpacked_parallel']:
-        mode_df = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == ratio)]
-        if len(mode_df) > 0:
-            row = mode_df.iloc[0]
-            row_data[f"{MODE_LABELS[mode]} P99"] = f"{row['p99_ms']:.1f}ms"
-            row_data[f"{MODE_LABELS[mode]} Avg"] = f"{row['avg_ms']:.1f}ms"
+    for mode in MODE_ORDER:
+        row = get_mode_row(df, mode, ratio)
+        if row is not None:
+            row_data[f"{MODE_LABELS_SHORT[mode]} P99"] = f"{row['p99_ms']:.1f}ms"
+            row_data[f"{MODE_LABELS_SHORT[mode]} Avg"] = f"{row['avg_ms']:.1f}ms"
         else:
-            row_data[f"{MODE_LABELS[mode]} P99"] = "N/A"
-            row_data[f"{MODE_LABELS[mode]} Avg"] = "N/A"
+            row_data[f"{MODE_LABELS_SHORT[mode]} P99"] = "N/A"
+            row_data[f"{MODE_LABELS_SHORT[mode]} Avg"] = "N/A"
     comparison_data.append(row_data)
 
 comparison_df = pd.DataFrame(comparison_data)
@@ -243,28 +346,24 @@ display(comparison_df.style.set_properties(**{
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 6️⃣ Plot 1: P99 vs Access Skew - ALL MODES (CORE STORY)
+# MAGIC ## 7️⃣ Plot 1: P99 vs Access Skew - ALL MODES (CORE STORY)
 # MAGIC 
 # MAGIC **This alone tells the whole story.**
 # MAGIC 
 # MAGIC Shows:
-# MAGIC - Lakebase P99 as hot traffic decreases
-# MAGIC - DynamoDB synthetic curve
-# MAGIC - DynamoDB production SLA line
-# MAGIC - Where each system wins
+# MAGIC - Lakebase P99 as hot traffic decreases across all modes
+# MAGIC - Where each execution strategy wins
 
 # COMMAND ----------
 
 fig, ax = plt.subplots(figsize=(14, 7))
 
-# Checkout.com professional color scheme
-checkout_blue = '#357FF5'
-checkout_cyan = '#00D4FF'
+# Build MODE_STYLES from centralized configuration
 MODE_STYLES = {
-    'serial': {'marker': 'o', 'linestyle': '-', 'color': '#94A3B8', 'label': 'Serial (30 queries)', 'linewidth': 2.5},
-    'binpacked': {'marker': 's', 'linestyle': '-', 'color': '#60A5FA', 'label': 'Bin-packed (10 queries)', 'linewidth': 2.5},
-    'binpacked_parallel': {'marker': '^', 'linestyle': '-', 'color': checkout_blue, 'label': 'Parallel (10 queries, 3 workers)', 'linewidth': 3},
-    'rpc_request_json': {'marker': 'd', 'linestyle': '-', 'color': checkout_cyan, 'label': 'RPC (1 query)', 'linewidth': 3.5}
+    'serial': {'marker': 'o', 'linestyle': '-', 'color': MODE_COLORS['serial'], 'label': MODE_LABELS_SHORT['serial'] + ' (30 queries)', 'linewidth': 2.5},
+    'binpacked': {'marker': 's', 'linestyle': '-', 'color': MODE_COLORS['binpacked'], 'label': MODE_LABELS_SHORT['binpacked'] + ' (10 queries)', 'linewidth': 2.5},
+    'binpacked_parallel': {'marker': '^', 'linestyle': '-', 'color': MODE_COLORS['binpacked_parallel'], 'label': MODE_LABELS_SHORT['binpacked_parallel'] + ' (10 queries, 3 workers)', 'linewidth': 3},
+    'rpc_request_json': {'marker': 'd', 'linestyle': '-', 'color': MODE_COLORS['rpc_request_json'], 'label': MODE_LABELS_SHORT['rpc_request_json'] + ' (1 query)', 'linewidth': 3.5}
 }
 
 for mode, style in MODE_STYLES.items():
@@ -624,7 +723,7 @@ if len(entity_p99_data) > 0:
     ax.set_xlabel("Hot Traffic % (per entity)", fontsize=14, fontweight='bold')
     ax.set_ylabel("Entity Type", fontsize=14, fontweight='bold')
     ax.set_title("🔥 Entity Contribution Heatmap: Which Entity Dominates P99?\n" +
-                 "(P99 per entity measured independently; request latency uses sum [serial] or max [parallel])",
+                 "(Per-entity P99 from Parallel mode; RPC excluded as single-call with no entity breakdown)",
                  fontsize=14, fontweight='bold', pad=20)
     
     # Invert x-axis to match other plots (100% on left)
@@ -958,7 +1057,7 @@ if 'parallel_workers' in df.columns:
         ax.set_ylabel('Latency (ms)', fontsize=14, fontweight='bold')
         
         # ✅ Title reflecting selected regime
-        regime_label = "production-realistic" if selected_hot_pct == 10 else ("fully cold" if selected_hot_pct == 0 else "mixed")
+        regime_label = "production-like skew (0-10% hot)" if selected_hot_pct == 10 else ("fully cold" if selected_hot_pct == 0 else "mixed")
         title_text = f'Workers Sweep: Diminishing Returns After 2-3 Workers ({selected_hot_pct}% hot, {regime_label})'
         ax.set_title(title_text, fontsize=18, fontweight='700', pad=20, color='#1E293B')
         
@@ -1285,11 +1384,12 @@ cold_points = df[df['hot_traffic_pct'] == 0].copy()
 
 # CRITICAL: For parallel mode, filter to w=3 specifically before deduplicating
 if 'parallel_workers' in cold_points.columns:
-    # Keep serial and binpacked as-is, but filter parallel to w=3 only
-    serial_binpacked = cold_points[cold_points['fetch_mode'].isin(['serial', 'binpacked'])]
+    # Keep serial, binpacked, and RPC as-is, but filter parallel to w=3 only
+    base_modes = ['serial', 'binpacked', 'rpc_request_json']
+    base = cold_points[cold_points['fetch_mode'].isin(base_modes)]
     parallel_w3 = cold_points[(cold_points['fetch_mode'] == 'binpacked_parallel') & 
                                (cold_points['parallel_workers'] == 3)]
-    cold_points = pd.concat([serial_binpacked, parallel_w3], ignore_index=True)
+    cold_points = pd.concat([base, parallel_w3], ignore_index=True)
 else:
     # No parallel_workers column, keep all
     pass
@@ -1305,23 +1405,10 @@ if 'parallel_workers' in cold_points.columns:
     if len(parallel_data) > 0:
         print(f"   🔍 Debug - Parallel workers: {parallel_data['parallel_workers'].values}")
 
-# Group by mode and hot%
-modes = ['serial', 'binpacked', 'binpacked_parallel', 'rpc_request_json']
-mode_labels = {
-    'serial': 'Serial\n(30 queries)',
-    'binpacked': 'Bin-packed\n(10 queries)',
-    'binpacked_parallel': 'Parallel\n(10 queries, 3 workers)',
-    'rpc_request_json': 'RPC\n(1 query)'
-}
-# Checkout.com professional blue color scheme
-checkout_blue = '#357FF5'  # Primary blue from Checkout.com
-checkout_cyan = '#00D4FF'   # Checkout cyan for RPC mode
-mode_colors = {
-    'serial': '#94A3B8',       # Subtle gray-blue for baseline
-    'binpacked': '#60A5FA',    # Lighter blue for intermediate
-    'binpacked_parallel': checkout_blue,  # Bright Checkout blue
-    'rpc_request_json': checkout_cyan  # Cyan for RPC ultimate optimization
-}
+# Use centralized mode configuration
+modes = MODE_ORDER
+mode_labels = MODE_LABELS
+mode_colors = MODE_COLORS
 
 # Simple bar chart - one bar per mode
 x_positions = np.arange(len(modes))
@@ -1356,7 +1443,7 @@ ax.set_ylabel('P99 Latency (ms)', fontsize=12, fontweight='600', labelpad=10, co
 ax.set_xlabel('Execution Mode', fontsize=12, fontweight='600', labelpad=10, color='#475569')
 ax.set_title('Executive Decision Chart: P99 in Worst-Case Cold Reality (0% Hot)', 
              fontsize=13, fontweight='600', pad=20, color='#1E293B')
-# Set x-axis for 3 modes
+# Set x-axis for all modes
 ax.set_xticks(x_positions)
 ax.set_xticklabels([mode_labels[m].replace('\n', ' ') for m in modes], fontsize=10, color='#64748B')
 ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
@@ -1396,7 +1483,7 @@ print("📊 Chart 2: Queries per request (structural reduction)...")
 # Standardized chart size for all executive summary charts
 fig, ax = plt.subplots(figsize=(14, 7))
 
-# Get representative row for each mode (use 80% hot as reference)
+# Get representative row for each mode (use production-like hot% as reference)
 queries_data = []
 for mode in modes:
     mode_df = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == 80)]
@@ -1436,31 +1523,37 @@ if queries_data:
     if len(queries_data) >= 2:
         serial_q = queries_data[0]['queries']
         binpacked_q = queries_data[1]['queries']
-        reduction_pct = ((serial_q - binpacked_q) / serial_q * 100)
         
-        # Annotation styling - consistent with other charts
-        ax.annotate('', xy=(0.5, serial_q - 2), xytext=(0.5, binpacked_q + 2),
-                   arrowprops=dict(arrowstyle='<->', color='#357FF5', lw=2, alpha=0.8))
-        ax.text(0.7, (serial_q + binpacked_q) / 2, f'-{reduction_pct:.0f}%',
-               ha='left', va='center', fontsize=12, fontweight='700',
-               color='#357FF5', 
-               bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
-                        edgecolor='#357FF5', alpha=0.95, linewidth=2))
+        # Guard against division by zero (can occur if data is corrupted)
+        if serial_q > 0:
+            reduction_pct = ((serial_q - binpacked_q) / serial_q * 100)
+            
+            # Annotation styling - consistent with other charts
+            ax.annotate('', xy=(0.5, serial_q - 2), xytext=(0.5, binpacked_q + 2),
+                       arrowprops=dict(arrowstyle='<->', color='#357FF5', lw=2, alpha=0.8))
+            ax.text(0.7, (serial_q + binpacked_q) / 2, f'-{reduction_pct:.0f}%',
+                   ha='left', va='center', fontsize=12, fontweight='700',
+                   color='#357FF5', 
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
+                            edgecolor='#357FF5', alpha=0.95, linewidth=2))
     
     # Add HERO annotation for Serial → RPC (if RPC data available)
     if len(queries_data) >= 4:
         serial_q = queries_data[0]['queries']
         rpc_q = queries_data[3]['queries']
-        rpc_reduction_pct = ((serial_q - rpc_q) / serial_q * 100)
         
-        # Dramatic annotation in cyan for RPC breakthrough
-        ax.annotate('', xy=(2.5, serial_q - 2), xytext=(2.5, rpc_q + 0.5),
-                   arrowprops=dict(arrowstyle='<->', color='#00D4FF', lw=3, alpha=0.9))
-        ax.text(2.7, (serial_q + rpc_q) / 2, f'-{rpc_reduction_pct:.0f}%\nRPC Win',
-               ha='left', va='center', fontsize=13, fontweight='800',
-               color='#00D4FF', 
-               bbox=dict(boxstyle='round,pad=0.6', facecolor='white', 
-                        edgecolor='#00D4FF', alpha=0.98, linewidth=2.5))
+        # Guard against division by zero
+        if serial_q > 0:
+            rpc_reduction_pct = ((serial_q - rpc_q) / serial_q * 100)
+            
+            # Dramatic annotation in cyan for RPC breakthrough
+            ax.annotate('', xy=(2.5, serial_q - 2), xytext=(2.5, rpc_q + 0.5),
+                       arrowprops=dict(arrowstyle='<->', color='#00D4FF', lw=3, alpha=0.9))
+            ax.text(2.7, (serial_q + rpc_q) / 2, f'-{rpc_reduction_pct:.0f}%\nRPC Win',
+                   ha='left', va='center', fontsize=13, fontweight='800',
+                   color='#00D4FF', 
+                   bbox=dict(boxstyle='round,pad=0.6', facecolor='white', 
+                            edgecolor='#00D4FF', alpha=0.98, linewidth=2.5))
 
     # Professional styling - consistent with other charts
     ax.set_ylabel('Queries Per Request', fontsize=12, fontweight='600', labelpad=10, color='#475569')
@@ -1506,17 +1599,23 @@ fig, ax = plt.subplots(figsize=(14, 7))
 
 # Calculate cold penalty for each mode
 penalty_data = []
+baseline_hot_pct_used = None  # Track if we're using a fallback baseline
 for mode in modes:
-    mode_df = df[df['fetch_mode'] == mode]
-    
-    # For parallel mode, filter to w=3 specifically
-    if mode == 'binpacked_parallel' and 'parallel_workers' in df.columns:
-        mode_df_w3 = mode_df[mode_df['parallel_workers'] == 3]
-        if len(mode_df_w3) > 0:
-            mode_df = mode_df_w3
+    # Use standardized mode selection helper
+    mode_df = select_mode_df(df, mode)
     
     p99_cold = mode_df[mode_df['hot_traffic_pct'] == 0]['p99_ms'].values
+    
+    # Try 100% hot first, but fall back to max available hot% if 100% is missing
     p99_hot = mode_df[mode_df['hot_traffic_pct'] == 100]['p99_ms'].values
+    hot_baseline_pct = 100
+    
+    if len(p99_hot) == 0 and len(mode_df) > 0:
+        # 100% hot not available, use max available hot%
+        hot_baseline_pct = mode_df['hot_traffic_pct'].max()
+        p99_hot = mode_df[mode_df['hot_traffic_pct'] == hot_baseline_pct]['p99_ms'].values
+        if baseline_hot_pct_used is None:
+            baseline_hot_pct_used = hot_baseline_pct
     
     if len(p99_cold) > 0 and len(p99_hot) > 0:
         penalty = p99_cold[0] / p99_hot[0]
@@ -1526,6 +1625,7 @@ for mode in modes:
             'penalty': penalty,
             'p99_cold': p99_cold[0],
             'p99_hot': p99_hot[0],
+            'hot_baseline_pct': hot_baseline_pct,
             'color': mode_colors[mode]
         })
 
@@ -1564,18 +1664,27 @@ if penalty_data:
     # Highlight best performer - positioned below the chart
     best_mode = penalty_data[0]
     worst_mode = penalty_data[-1]
-    stability_gain = ((worst_mode['penalty'] - best_mode['penalty']) / worst_mode['penalty'] * 100)
     
-    # Use figure coordinates for better control - more professional styling
-    fig.text(0.15, 0.02, 
-           f"✓ {best_mode['label']} is {stability_gain:.0f}% more stable under cold reads",
-           ha='left', va='bottom', fontsize=10, fontweight='600',
-           color='#357FF5', transform=fig.transFigure)
+    # Guard against division by zero (edge case where worst_mode has 0 penalty)
+    if worst_mode['penalty'] > 0:
+        stability_gain = ((worst_mode['penalty'] - best_mode['penalty']) / worst_mode['penalty'] * 100)
+        
+        # Use figure coordinates for better control - more professional styling
+        fig.text(0.15, 0.02, 
+               f"✓ {best_mode['label']} is {stability_gain:.0f}% more stable under cold reads",
+               ha='left', va='bottom', fontsize=10, fontweight='600',
+               color='#357FF5', transform=fig.transFigure)
 
-    # Professional styling
-    ax.set_xlabel('Cold Penalty Ratio (P99 @ 0% hot ÷ P99 @ 100% hot)', 
-                  fontsize=12, fontweight='600', labelpad=12, color='#475569')
-    ax.set_title('Cold Penalty: Which Mode Stays Resilient When Cache Disappears?', 
+    # Professional styling with adaptive label based on baseline used
+    if baseline_hot_pct_used is not None and baseline_hot_pct_used != 100:
+        xlabel = f'Cold Penalty Ratio (P99 @ 0% hot ÷ P99 @ {int(baseline_hot_pct_used)}% hot)'
+        title_note = f'\n(Hot baseline uses {int(baseline_hot_pct_used)}% - max available)'
+    else:
+        xlabel = 'Cold Penalty Ratio (P99 @ 0% hot ÷ P99 @ 100% hot)'
+        title_note = ''
+    
+    ax.set_xlabel(xlabel, fontsize=12, fontweight='600', labelpad=12, color='#475569')
+    ax.set_title(f'Cold Penalty: Which Mode Stays Resilient When Cache Disappears?{title_note}', 
                  fontsize=13, fontweight='600', pad=20, color='#1E293B')
     ax.set_xlim(0, max([d['penalty'] for d in penalty_data]) * 1.2)
     ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
@@ -1610,7 +1719,7 @@ plt.close()
 # COMMAND ----------
 
 # Chart 4: SLA Heatmap (Does it meet SLA under cold reads?)
-print("📊 Chart 4: SLA Heatmap (0% and 10% hot - 2×3 scorecard)...")
+print("📊 Chart 4: SLA Heatmap (0% and 10% hot - 2×4 scorecard)...")
 
 try:
     # Standardized chart size for all executive summary charts
@@ -1619,28 +1728,23 @@ try:
     # Prepare heatmap data: Rows = [0% hot, 10% hot], Cols = [Serial, Binpacked, Parallel, RPC]
     # Note: Benchmark tests [100, 90, 80, 70, 60, 50, 30, 10, 0] - no 20%!
     hot_levels = [0, 10]
-    modes = ['serial', 'binpacked', 'binpacked_parallel', 'rpc_request_json']
-    mode_labels_short = ['Serial\n(30 queries)', 'Bin-packed\n(10 queries)', 'Parallel\n(3 workers)', 'RPC\n(1 query)']
+    # Use centralized MODE_ORDER
+    heatmap_modes = MODE_ORDER
+    heatmap_mode_labels = [MODE_LABELS[m] for m in heatmap_modes]
 
     # Extract P99 values - check if data exists
     heatmap_data = []
     print(f"  Available hot_traffic_pct values: {sorted(df['hot_traffic_pct'].unique())}")
     for hot_pct in hot_levels:
         row_data = []
-        for mode in modes:
-            mode_df = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == hot_pct)]
+        for mode in heatmap_modes:
+            # Use get_mode_row helper for safer retrieval
+            row = get_mode_row(df, mode, hot_pct)
             
-            # For parallel mode, filter to w=3 specifically
-            if mode == 'binpacked_parallel' and 'parallel_workers' in df.columns and len(mode_df) > 0:
-                mode_df_w3 = mode_df[mode_df['parallel_workers'] == 3]
-                if len(mode_df_w3) > 0:
-                    mode_df = mode_df_w3
-                # else: fallback to any available worker count (already filtered)
-            
-            if len(mode_df) > 0:
-                p99 = mode_df.iloc[0]['p99_ms']
+            if row is not None:
+                p99 = row['p99_ms']
                 row_data.append(p99)
-                workers_info = f" (w={int(mode_df.iloc[0]['parallel_workers'])})" if mode == 'binpacked_parallel' and 'parallel_workers' in mode_df.columns else ""
+                workers_info = f" (w={int(row['parallel_workers'])})" if mode == 'binpacked_parallel' and 'parallel_workers' in df.columns and pd.notna(row.get('parallel_workers')) else ""
                 print(f"  Found data: {mode}{workers_info} @ {hot_pct}% hot = {p99:.1f}ms")
             else:
                 row_data.append(None)
@@ -1673,7 +1777,7 @@ try:
     ax.set_aspect('equal')  # Equal aspect for proper cell proportions
 
     for i, hot_pct in enumerate(hot_levels):
-        for j, mode in enumerate(modes):
+        for j, mode in enumerate(heatmap_modes):
             val = heatmap_matrix[i, j]
             color = get_cell_color(val)
             
@@ -1713,7 +1817,7 @@ try:
 
     # Set labels (adjusted for 4 columns)
     ax.set_xticks([cell_width * 0.5, cell_width * 1.5, cell_width * 2.5, cell_width * 3.5])
-    ax.set_xticklabels(mode_labels_short, fontsize=12, fontweight='600', color='#475569')
+    ax.set_xticklabels(heatmap_mode_labels, fontsize=12, fontweight='600', color='#475569')
     ax.set_yticks([cell_height * 0.5, cell_height * 1.5])
     ax.set_yticklabels(['10% Hot\n(Mostly Cold)', '0% Hot\n(Fully Cold)'], fontsize=12, fontweight='600', color='#475569')
 
@@ -1760,13 +1864,9 @@ print("📊 Chart 5: Entity P99 Composition at 0% hot...")
 try:
     # Parse entity_p99_ms at 0% hot for parallel mode (best performer)
     entity_contrib_data = []
-    parallel_0_hot = df[(df['fetch_mode'] == 'binpacked_parallel') & (df['hot_traffic_pct'] == 0)]
-    
-    # Filter to w=3 specifically if parallel_workers column exists
-    if len(parallel_0_hot) > 0 and 'parallel_workers' in df.columns:
-        parallel_0_hot_w3 = parallel_0_hot[parallel_0_hot['parallel_workers'] == 3]
-        if len(parallel_0_hot_w3) > 0:
-            parallel_0_hot = parallel_0_hot_w3
+    # Use standardized mode selection helper
+    parallel_df = select_mode_df(df, 'binpacked_parallel')
+    parallel_0_hot = parallel_df[parallel_df['hot_traffic_pct'] == 0]
 
     if len(parallel_0_hot) > 0 and 'entity_p99_ms' in df.columns:
         row = parallel_0_hot.iloc[0]
@@ -1808,7 +1908,7 @@ try:
         
         # Styling
         ax.set_xlabel('P99 Latency (ms) at 0% Hot', fontsize=12, fontweight='600', labelpad=10, color='#475569')
-        ax.set_title('Tail Driver Analysis: Which Entity Dominates P99?',
+        ax.set_title('Tail Driver Analysis: Which Entity Dominates P99?\n(Parallel mode data; RPC excluded as single-call)',
                      fontsize=13, fontweight='600', pad=20, color='#1E293B')
         ax.set_xlim(0, max(p99_values) * 1.15)
         ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
@@ -1826,11 +1926,14 @@ try:
         # Add insight annotation
         worst_entity = entity_contrib_data[0]
         best_entity = entity_contrib_data[-1]
-        gap_pct = ((worst_entity['p99_ms'] - best_entity['p99_ms']) / best_entity['p99_ms'] * 100)
         
-        fig.text(0.15, 0.02, 
-                 f"→ {worst_entity['entity']} is the bottleneck ({gap_pct:.0f}% slower than fastest entity)",
-                 ha='left', va='bottom', fontsize=10, fontweight='600', color='#357FF5')
+        # Guard against division by zero
+        if best_entity['p99_ms'] > 0:
+            gap_pct = ((worst_entity['p99_ms'] - best_entity['p99_ms']) / best_entity['p99_ms'] * 100)
+            
+            fig.text(0.15, 0.02, 
+                     f"→ {worst_entity['entity']} is the bottleneck ({gap_pct:.0f}% slower than fastest entity)",
+                     ha='left', va='bottom', fontsize=10, fontweight='600', color='#357FF5')
         
         plt.tight_layout(pad=1.5)
         plt.savefig('/tmp/zipfian_exec_entity_composition.png', dpi=150, facecolor='white')
@@ -1939,26 +2042,28 @@ try:
             'binpacked': '#60A5FA',
             'binpacked_parallel': checkout_blue
         }
-        mode_labels_amp = {
-            'serial': 'Serial',
-            'binpacked': 'Bin-packed',
-            'binpacked_parallel': 'Parallel'
-        }
+        # Tail amplification derived from per-statement slow-query logs
+        # Only plot modes that exist in tail_amp_df (typically serial + binpacked)
+        available_tail_modes = tail_amp_df['mode'].unique()
         
-        for mode in ['serial', 'binpacked', 'binpacked_parallel']:
+        for mode in MODE_ORDER:
+            if mode not in available_tail_modes:
+                continue  # Skip modes without tail amplification data
+                
             mode_data = tail_amp_df[tail_amp_df['mode'] == mode].sort_values('hot_traffic_pct', ascending=False)
             if len(mode_data) > 0:
                 ax.plot(mode_data['hot_traffic_pct'], 
                        mode_data['tail_amplification_pct'],
                        marker='o', markersize=7, linewidth=2.5,
-                       label=mode_labels_amp[mode], color=mode_colors_amp[mode],
+                       label=MODE_LABELS_SHORT.get(mode, mode), 
+                       color=mode_colors_amp.get(mode, MODE_COLORS.get(mode, '#94A3B8')),
                        alpha=0.95)
         
         # Styling
         ax.set_xlabel('Hot Traffic % (per entity)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
         ax.set_ylabel('Probability of Tail Amplification (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
-        ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query >100ms)',
-                     fontsize=13, fontweight='600', pad=20, color='#1E293B')
+        ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query >100ms)\n(Derived from per-statement slow-query logs)',
+                     fontsize=12, fontweight='600', pad=20, color='#1E293B')
         ax.legend(fontsize=10, loc='upper left', framealpha=0.95, edgecolor='#E2E8F0', fancybox=False)
         ax.grid(True, alpha=0.15, linewidth=1, color='#CBD5E1')
         ax.set_axisbelow(True)
@@ -2260,27 +2365,28 @@ ax.set_facecolor('#FAFAFA')
 fig.patch.set_facecolor('white')
 ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
 
-# Highlight 80% hot case (production-realistic) - moved inside chart and changed to dark red
-highlight_idx = hot_pct_values.index(80)
-ax.axvline(highlight_idx, color='#DC2626', linestyle='--', linewidth=2, alpha=0.6, zorder=1)
-ax.text(highlight_idx, 50, 'Production scenario\n(80% hot per entity)',
-       ha='center', va='center', fontsize=10, fontweight='700', color='#DC2626',
-       bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
-                edgecolor='#DC2626', linewidth=1.5, alpha=0.95))
+# Highlight production-like range (0-10% hot) - most requests are cold/mixed
+if 10 in hot_pct_values:
+    highlight_idx = hot_pct_values.index(10)
+    ax.axvline(highlight_idx, color='#DC2626', linestyle='--', linewidth=2, alpha=0.6, zorder=1)
+    ax.text(highlight_idx, 50, 'Production-like skew\n(0-10% hot: mostly cold)',
+           ha='center', va='center', fontsize=10, fontweight='700', color='#DC2626',
+           bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
+                    edgecolor='#DC2626', linewidth=1.5, alpha=0.95))
 
 # Add insight annotations - moved up to avoid x-axis overlap
-# Calculate actual values at 80% hot
-p80 = 0.8
-fully_hot_80 = (p80 ** 3) * 100
-fully_cold_80 = ((1 - p80) ** 3) * 100
-mixed_80 = 100 - fully_hot_80 - fully_cold_80
+# Calculate actual values at 10% hot (production-like skew)
+p10 = 0.10
+fully_hot_10 = (p10 ** 3) * 100
+fully_cold_10 = ((1 - p10) ** 3) * 100
+mixed_10 = 100 - fully_hot_10 - fully_cold_10
 
 fig.text(0.15, 0.20, 
-         f'💡 At 80% hot (production):\n'
-         f'• Fully hot: {fully_hot_80:.1f}% (cache wins)\n'
-         f'• Mixed (1-2 cold): {mixed_80:.1f}% (most common!)\n'
-         f'• Fully cold: {fully_cold_80:.1f}% (tail dominates)\n\n'
-         f'Mixed cases are where "it depends" lives.',
+         f'💡 At 10% hot (production-like skew):\n'
+         f'• Fully hot: {fully_hot_10:.1f}% (rare cache wins)\n'
+         f'• Mixed (1-2 cold): {mixed_10:.1f}% (most common!)\n'
+         f'• Fully cold: {fully_cold_10:.1f}% (tail dominates)\n\n'
+         f'Most requests are cold/mixed — optimize cold path.',
          ha='left', va='bottom', fontsize=10, fontweight='600', color='#1E293B',
          bbox=dict(boxstyle='round,pad=1', facecolor='#FFF9E6', 
                   edgecolor='#F59E0B', linewidth=2, alpha=0.95))
@@ -2380,7 +2486,7 @@ if len(data_10) > 0 and len(data_0) > 0:
     # Position it strategically to not cover data points
     callout_text = (
         'Operational takeaway:\n'
-        'In production-realistic traffic (≤10% hot per entity), most requests are mixed hot/cold.\n'
+        'In production-like skew (0-10% hot per entity), most requests are mixed hot/cold.\n'
         'This creates wide latency variance and long tails — even when average latency looks acceptable.\n\n'
         'Fully cold traffic shows the upper bound, but mixed requests define day-to-day P99 behavior.'
     )
@@ -2526,7 +2632,7 @@ if 'entity_p99_ms' in df.columns:
         
         ax.set_xlabel('Hot Traffic % (per entity)', fontsize=14, fontweight='600', labelpad=12, color='#475569')
         ax.set_ylabel('Share of Request P99 (%)', fontsize=14, fontweight='600', labelpad=12, color='#475569')
-        ax.set_title('Entity Breakdown: Which Entity Dominates Request Tail?',
+        ax.set_title('Entity Breakdown: Which Entity Dominates Request Tail?\n(Serial mode data; RPC excluded as single-call)',
                     fontsize=18, fontweight='700', pad=20, color='#1E293B')
         ax.legend(fontsize=13, loc='upper right', frameon=True, fancybox=True, shadow=True)
         ax.grid(True, axis='y', alpha=0.3, linestyle='--', linewidth=0.8)

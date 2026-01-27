@@ -180,6 +180,7 @@ print(f"🚀 V5 ENHANCANCEMENTS:")
 print(f"   ✅ Cost-normalized metrics (latency per query)")
 print(f"   ✅ Concurrency sweep (workers: {PARALLEL_WORKERS})")
 print(f"   ✅ Entity timing details (Gantt chart support)")
+print(f"   ✅ Transaction scoping: 1 tx/request (serial+binpacked), 1 tx/entity (parallel workers)")
 print()
 print(f"📊 MODE CONFIGURATIONS ({len(MODE_CONFIGS)} total):")
 for cfg in MODE_CONFIGS:
@@ -276,6 +277,7 @@ import json
 import uuid
 import re
 from collections import defaultdict
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from psycopg_pool import ConnectionPool
 
@@ -376,6 +378,50 @@ def flush_cache(conn):
     print("   ℹ️  True OS cache flush not possible from PostgreSQL")
     print("   ℹ️  Cache behavior measured via pg_statio (buffer hits vs reads)")
     print("   ℹ️  Hot/cold key mix provides realistic cache distribution")
+
+@contextmanager
+def request_tx(conn):
+    """
+    Explicit transaction scope for measured fetch only.
+    IMPORTANT: Do not include any code that calls conn.commit() inside this scope.
+    """
+    try:
+        conn.execute("BEGIN")
+        yield
+        conn.execute("COMMIT")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+
+# Expected entity names for normalization
+EXPECTED_ENTITIES = ["card_fingerprint", "customer_email", "cardholder_name"]
+
+def normalize_entity_timings(entity_timings: dict, mode: str):
+    """
+    Normalize entity timings to handle RPC mode (single call) vs multi-entity modes.
+    
+    Args:
+        entity_timings: Dict of entity -> latency_ms
+        mode: Execution mode (serial/binpacked/binpacked_parallel/rpc_request_json)
+    
+    Returns:
+        tuple: (normalized_dict, rpc_call_ms, is_rpc)
+            - normalized_dict: Dict with EXPECTED_ENTITIES keys (missing -> 0.0)
+            - rpc_call_ms: Float for RPC mode, None otherwise
+            - is_rpc: Boolean flag
+    """
+    if mode.startswith("rpc") or "rpc" in mode:
+        # RPC mode: single call, no per-entity breakdown
+        rpc_call_ms = float(entity_timings.get("rpc_call", 0.0))
+        normalized = {e: 0.0 for e in EXPECTED_ENTITIES}
+        return normalized, rpc_call_ms, True
+    
+    # Non-RPC: preserve reported entity timings, fill any missing with 0
+    normalized = {e: float(entity_timings.get(e, 0.0)) for e in EXPECTED_ENTITIES}
+    return normalized, None, False
 
 def read_pg_io_stats(conn):
     """Read PostgreSQL I/O statistics for this schema."""
@@ -705,6 +751,93 @@ def ensure_results_table(conn):
     print(f"✅ Keys metadata table ensured: {RESULTS_SCHEMA}.zipfian_keys_run_meta")
     print(f"✅ Keys table ensured: {RESULTS_SCHEMA}.{KEYS_TABLE}")
 
+def ensure_rpc_function(conn):
+    """Create server-side RPC function for fetching all features in one call."""
+    with conn.cursor() as cur:
+        # Build the function SQL with LEFT JOIN LATERAL for all 30 tables
+        cur.execute(f"""
+            CREATE OR REPLACE FUNCTION {SCHEMA}.fetch_request_features(
+                card_fp_key TEXT,
+                email_key TEXT,
+                name_key TEXT
+            ) RETURNS JSONB
+            LANGUAGE sql
+            STABLE
+            AS $$
+                SELECT jsonb_build_object(
+                    'card_fingerprint', jsonb_build_object(
+                        'client_id_card_fingerprint__fraud_rates__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__fraud_rates__30d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1),
+                        'client_id_card_fingerprint__fraud_rates__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__fraud_rates__365d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1),
+                        'client_id_card_fingerprint__fraud_rates__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__fraud_rates__90d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1),
+                        'client_id_card_fingerprint__good_rates__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__good_rates__30d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1),
+                        'client_id_card_fingerprint__good_rates__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__good_rates__365d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1),
+                        'client_id_card_fingerprint__good_rates__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__good_rates__90d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1),
+                        'client_id_card_fingerprint__time_since__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__time_since__30d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1),
+                        'client_id_card_fingerprint__time_since__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__time_since__365d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1),
+                        'client_id_card_fingerprint__time_since__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_card_fingerprint__time_since__90d t WHERE hash_key = card_fp_key ORDER BY hash_key LIMIT 1)
+                    ),
+                    'customer_email', jsonb_build_object(
+                        'client_id_customer_email_clean__fraud_rates__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__fraud_rates__30d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1),
+                        'client_id_customer_email_clean__fraud_rates__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__fraud_rates__365d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1),
+                        'client_id_customer_email_clean__fraud_rates__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__fraud_rates__90d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1),
+                        'client_id_customer_email_clean__good_rates__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__good_rates__30d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1),
+                        'client_id_customer_email_clean__good_rates__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__good_rates__365d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1),
+                        'client_id_customer_email_clean__good_rates__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__good_rates__90d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1),
+                        'client_id_customer_email_clean__time_since__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__time_since__30d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1),
+                        'client_id_customer_email_clean__time_since__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__time_since__365d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1),
+                        'client_id_customer_email_clean__time_since__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_customer_email_clean__time_since__90d t WHERE hash_key = email_key ORDER BY hash_key LIMIT 1)
+                    ),
+                    'cardholder_name', jsonb_build_object(
+                        'client_id_cardholder_name_clean__fraud_rates__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__fraud_rates__30d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__fraud_rates__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__fraud_rates__365d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__fraud_rates__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__fraud_rates__90d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__good_rates__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__good_rates__30d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__good_rates__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__good_rates__365d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__good_rates__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__good_rates__90d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__tesseract_velocities__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__tesseract_velocities__30d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__tesseract_velocities__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__tesseract_velocities__365d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__tesseract_velocities__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__tesseract_velocities__90d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__time_since__30d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__time_since__30d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__time_since__365d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__time_since__365d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1),
+                        'client_id_cardholder_name_clean__time_since__90d',
+                        (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__time_since__90d t WHERE hash_key = name_key ORDER BY hash_key LIMIT 1)
+                    )
+                );
+            $$;
+        """)
+        conn.commit()
+    
+    print(f"✅ RPC function ensured: {SCHEMA}.fetch_request_features()")
+
 def persist_results(conn, hot_pct, results):
     """Persist benchmark results to Lakebase."""
     try:
@@ -946,6 +1079,7 @@ print("✅ Results persistence functions loaded")
 # COMMAND ----------
 conn = get_conn()
 ensure_results_table(conn)
+ensure_rpc_function(conn)
 
 # ✅ V5.3: Refresh connection after schema changes to ensure visibility
 print("🔄 Refreshing connection after schema updates...")
@@ -1253,6 +1387,7 @@ def fetch_entity_worker(entity_info, request_start, log_query_timings=False, slo
     """Worker function for parallel entity fetch.
     
     ✅ V5.3: Now logs slow feature-group queries for parallel mode
+    ✅ V5.4: Explicit transaction scope per worker connection
     """
     pool_wait_start = time.perf_counter()
     with pool.connection() as conn:  # type: ignore
@@ -1260,26 +1395,35 @@ def fetch_entity_worker(entity_info, request_start, log_query_timings=False, slo
         if pool_wait_ms > 100:
             print(f"         ⚠️  Slow pool acquisition: {pool_wait_ms:.0f}ms for {entity_info['entity']}")
 
-        entity_start = time.perf_counter()
-        results, queries_executed, group_timings = fetch_entity_binpacked(
-            conn,
-            entity_info["entity"],
-            entity_info["hashkey"],
-            entity_info["tables"],
-            log_slow_queries=log_query_timings,
-            slow_threshold_ms=slow_threshold_ms
-        )
-        _ = results  # results not used beyond fetch timing; retained for correctness
-        entity_end = time.perf_counter()
-        latency_ms = (entity_end - entity_start) * 1000
+        conn.execute("BEGIN")
+        try:
+            entity_start = time.perf_counter()
+            results, queries_executed, group_timings = fetch_entity_binpacked(
+                conn,
+                entity_info["entity"],
+                entity_info["hashkey"],
+                entity_info["tables"],
+                log_slow_queries=log_query_timings,
+                slow_threshold_ms=slow_threshold_ms
+            )
+            conn.execute("COMMIT")
+            _ = results  # results not used beyond fetch timing; retained for correctness
+            entity_end = time.perf_counter()
+            latency_ms = (entity_end - entity_start) * 1000
 
-        gantt_entry = {
-            "entity": entity_info["entity"],
-            "start_ms": (entity_start - request_start) * 1000,
-            "end_ms": (entity_end - request_start) * 1000
-        }
+            gantt_entry = {
+                "entity": entity_info["entity"],
+                "start_ms": (entity_start - request_start) * 1000,
+                "end_ms": (entity_end - request_start) * 1000
+            }
 
-        return entity_info["entity"], latency_ms, gantt_entry, queries_executed, pool_wait_ms, group_timings
+            return entity_info["entity"], latency_ms, gantt_entry, queries_executed, pool_wait_ms, group_timings
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
 
 def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_workers=3, request_start=None, log_query_timings=False, slow_threshold_ms=40):
     """Fetch features using bin-packed queries with parallel execution.
@@ -1341,14 +1485,19 @@ def fetch_features_rpc_request(conn, entities_with_keys, iteration_idx=0, reques
     call_start = time.perf_counter()
     
     with conn.cursor() as cur:
-        cur.execute("SELECT features.fetch_request_features(%s, %s, %s)", params)
-        result = cur.fetchone()[0]  # Returns JSONB
+        cur.execute(f"SELECT {SCHEMA}.fetch_request_features(%s, %s, %s)", params)
+        rpc_result = cur.fetchone()[0]  # Returns JSONB
     
     call_end = time.perf_counter()
     call_latency_ms = (call_end - call_start) * 1000
     
-    # Estimate payload size
-    payload_bytes = len(json.dumps(result)) if result else 0
+    # Defensive: handle null result
+    if rpc_result is None:
+        payload_bytes = 0
+    elif isinstance(rpc_result, str):
+        payload_bytes = len(rpc_result)
+    else:
+        payload_bytes = len(json.dumps(rpc_result))
     
     # For compatibility with existing code, create entity_timings dict
     # In RPC mode, we can't measure per-entity time server-side without modifying the function
@@ -1505,9 +1654,10 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
             for attempt in range(max_retries):
                 try:
                     if current_mode == "serial":
-                        entity_timings, io_blocks, executor_metrics, gantt_data, query_timings = fetch_features_for_request(
-                            conn, entities_for_request, i, False, request_start, log_timings
-                        )
+                        with request_tx(conn):
+                            entity_timings, io_blocks, executor_metrics, gantt_data, query_timings = fetch_features_for_request(
+                                conn, entities_for_request, i, False, request_start, log_timings
+                            )
 
                         queries_count = sum(len(e["tables"]) for e in entities_for_request)
                         total_queries_executed += queries_count
@@ -1526,9 +1676,10 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                                 slow_query_count = 0
 
                     elif current_mode == "binpacked":
-                        entity_timings, io_blocks, gantt_data, query_timings, queries_count = fetch_features_binpacked_serial(
-                            conn, entities_for_request, i, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS
-                        )
+                        with request_tx(conn):
+                            entity_timings, io_blocks, gantt_data, query_timings, queries_count = fetch_features_binpacked_serial(
+                                conn, entities_for_request, i, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS
+                            )
                         total_queries_executed += queries_count
 
                         request_latency_ms = sum(entity_timings.values()) if entity_timings else 0
@@ -1561,9 +1712,10 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                                 slow_query_count = 0
 
                     elif current_mode == "rpc_request_json":
-                        entity_timings, io_blocks, gantt_data, query_timings, queries_count, payload_bytes = fetch_features_rpc_request(
-                            conn, entities_for_request, i, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS
-                        )
+                        with request_tx(conn):
+                            entity_timings, io_blocks, gantt_data, query_timings, queries_count, payload_bytes = fetch_features_rpc_request(
+                                conn, entities_for_request, i, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS
+                            )
                         total_queries_executed += queries_count  # Should be 1
                         
                         # RPC mode: single call latency
@@ -1598,12 +1750,16 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
             if i < 3:
                 print(f"            Completed in {(time.time()-t0)*1000:.1f}ms")
 
-            if current_mode == "binpacked_parallel":
-                latency_ms = max(entity_timings.values()) if entity_timings else 0
-            elif current_mode == "rpc_request_json":
-                latency_ms = entity_timings.get("rpc_call", 0)
+            # ✅ V5.4: Normalize entity timings for RPC vs multi-entity modes
+            norm_entity_timings, rpc_call_ms, is_rpc = normalize_entity_timings(entity_timings, current_mode)
+
+            # Calculate request latency based on mode semantics
+            if is_rpc:
+                latency_ms = rpc_call_ms
+            elif current_mode == "binpacked_parallel":
+                latency_ms = max(norm_entity_timings.values()) if norm_entity_timings else 0
             else:
-                latency_ms = sum(entity_timings.values()) if entity_timings else 0
+                latency_ms = sum(norm_entity_timings.values()) if norm_entity_timings else 0
 
             latencies.append(latency_ms)
             cache_scores.append(hot_entities / len(ENTITY_NAMES))
@@ -1620,8 +1776,10 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
             if (i + 1) % 100 == 0:
                 conn.commit()
 
-            for entity, timing_ms in entity_timings.items():
-                entity_latency[entity].append(timing_ms)
+            # Track entity latencies only for non-RPC modes (RPC has no per-entity breakdown)
+            if not is_rpc:
+                for entity, timing_ms in norm_entity_timings.items():
+                    entity_latency[entity].append(timing_ms)
 
             if (i + 1) % max(1, ITERATIONS_PER_RUN // 10) == 0:
                 pct = ((i + 1) / ITERATIONS_PER_RUN) * 100
@@ -1657,18 +1815,27 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
         lat = np.array(latencies)
         cache = np.array(cache_scores)
 
+        # ✅ V5.4: Handle entity metrics for RPC vs multi-entity modes
         entity_p99_dict = {}
         entity_p99_contribution = {}
         total_entity_p99 = 0.0
 
-        for entity, timings in entity_latency.items():
-            if len(timings) > 0:
-                p99 = float(np.percentile(timings, 99))
-                entity_p99_dict[entity] = p99
-                total_entity_p99 += p99
+        if current_mode.startswith("rpc") or "rpc" in current_mode:
+            # RPC mode: Store single request-level P99, no per-entity breakdown
+            if len(latencies) > 0:
+                rpc_p99 = float(np.percentile(latencies, 99))
+                entity_p99_dict = {"rpc_call": rpc_p99}
+                entity_p99_contribution = {}  # No contribution breakdown for single call
+        else:
+            # Multi-entity modes: Calculate per-entity P99 and contributions
+            for entity, timings in entity_latency.items():
+                if len(timings) > 0:
+                    p99 = float(np.percentile(timings, 99))
+                    entity_p99_dict[entity] = p99
+                    total_entity_p99 += p99
 
-        for entity, p99 in entity_p99_dict.items():
-            entity_p99_contribution[entity] = (p99 / total_entity_p99 * 100) if total_entity_p99 > 0 else 0
+            for entity, p99 in entity_p99_dict.items():
+                entity_p99_contribution[entity] = (p99 / total_entity_p99 * 100) if total_entity_p99 > 0 else 0
 
         if cache.std() > 0 and lat.std() > 0:
             lat_cache_corr = float(np.corrcoef(lat, cache)[0, 1])
@@ -1703,6 +1870,7 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
         # Fix #1: non_explain_iters -> measured_iters
         print(f"         📊 Queries/request: {queries_per_request:.1f} (computed from {measured_iters} iterations)")
 
+        # ✅ V5.4: Build results dict with RPC-compatible metrics
         results[hot_pct] = {
             "p50": np.percentile(lat, 50),
             "p95": np.percentile(lat, 95),
@@ -1721,6 +1889,7 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
             "cache_state": cache_state,
             "fetch_mode": current_mode,
             "queries_per_request": queries_per_request,
+            "actual_queries_per_request_avg": queries_per_request,  # Self-describing for dashboards
             "avg_planning_time_ms": avg_planning_time_ms,
             "avg_rows_per_request": avg_rows_per_request,
             "avg_payload_bytes": avg_payload_bytes,
@@ -1744,9 +1913,16 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
         else:
             print(f"            I/O blocks/req:          N/A ({io_measurement_method})")
 
-        print(f"            Entity P99 contributions:")
-        for entity, contrib in entity_p99_contribution.items():
-            print(f"               {entity:25} {entity_p99_dict[entity]:.1f}ms ({contrib:.1f}%)")
+        # ✅ V5.4: Guard entity contribution printing for RPC mode
+        if entity_p99_contribution:
+            print(f"            Entity P99 contributions:")
+            for entity, contrib in entity_p99_contribution.items():
+                print(f"               {entity:25} {entity_p99_dict[entity]:.1f}ms ({contrib:.1f}%)")
+        elif entity_p99_dict:
+            # RPC mode: show single call P99
+            print(f"            RPC P99: {entity_p99_dict.get('rpc_call', 0):.1f}ms (single server-side call, no entity breakdown)")
+        else:
+            print(f"            Entity P99 contributions: N/A")
 
     config_key = f"{current_mode}_w{current_workers}" if current_workers else current_mode
     all_results[config_key] = results
