@@ -176,31 +176,51 @@ print()
 # COMMAND ----------
 
 # Global mode configuration - used by ALL charts
-MODE_ORDER = ['serial', 'binpacked', 'binpacked_parallel', 'rpc_request_json']
+MODE_ORDER = ['serial', 'binpacked', 'binpacked_parallel', 'rpc_request_json', 'rpc3_parallel']
 
 MODE_LABELS = {
     'serial': 'Serial\n(30 queries)',
     'binpacked': 'Bin-packed\n(10 queries)',
     'binpacked_parallel': 'Parallel\n(10 queries, 3 workers)',
-    'rpc_request_json': 'RPC\n(1 query)'
+    'rpc_request_json': 'RPC\n(1 call)',
+    'rpc3_parallel': 'RPC×Entity\n(3 calls, parallel)'
 }
 
 MODE_LABELS_SHORT = {
     'serial': 'Serial',
     'binpacked': 'Bin-packed',
     'binpacked_parallel': 'Parallel',
-    'rpc_request_json': 'RPC'
+    'rpc_request_json': 'RPC',
+    'rpc3_parallel': 'RPC×Entity'
+}
+
+MODE_DISPLAY_NAMES = {
+    'serial': 'Serial (30 queries)',
+    'binpacked': 'Bin-packed (10 queries)',
+    'binpacked_parallel': 'Parallel (10 queries, 3 workers)',
+    'rpc_request_json': 'RPC (1 call)',
+    'rpc3_parallel': 'RPC×Entity (3 calls, parallel)'
+}
+
+MODE_SORT_ORDER = {
+    'serial': 0,
+    'binpacked': 1,
+    'binpacked_parallel': 2,
+    'rpc_request_json': 3,
+    'rpc3_parallel': 4
 }
 
 # Checkout.com professional color palette
 checkout_blue = '#357FF5'
 checkout_cyan = '#00D4FF'
+checkout_purple = '#7C3AED'
 
 MODE_COLORS = {
     'serial': '#94A3B8',           # Gray-blue baseline
     'binpacked': '#60A5FA',        # Light blue
     'binpacked_parallel': checkout_blue,  # Checkout blue
-    'rpc_request_json': checkout_cyan     # Checkout cyan
+    'rpc_request_json': checkout_cyan,     # Checkout cyan
+    'rpc3_parallel': checkout_purple       # Checkout purple (RPC×Entity)
 }
 
 # Production-realistic hot traffic percentages
@@ -363,7 +383,8 @@ MODE_STYLES = {
     'serial': {'marker': 'o', 'linestyle': '-', 'color': MODE_COLORS['serial'], 'label': MODE_LABELS_SHORT['serial'] + ' (30 queries)', 'linewidth': 2.5},
     'binpacked': {'marker': 's', 'linestyle': '-', 'color': MODE_COLORS['binpacked'], 'label': MODE_LABELS_SHORT['binpacked'] + ' (10 queries)', 'linewidth': 2.5},
     'binpacked_parallel': {'marker': '^', 'linestyle': '-', 'color': MODE_COLORS['binpacked_parallel'], 'label': MODE_LABELS_SHORT['binpacked_parallel'] + ' (10 queries, 3 workers)', 'linewidth': 3},
-    'rpc_request_json': {'marker': 'd', 'linestyle': '-', 'color': MODE_COLORS['rpc_request_json'], 'label': MODE_LABELS_SHORT['rpc_request_json'] + ' (1 query)', 'linewidth': 3.5}
+    'rpc_request_json': {'marker': 'd', 'linestyle': '-', 'color': MODE_COLORS['rpc_request_json'], 'label': MODE_LABELS_SHORT['rpc_request_json'] + ' (1 call)', 'linewidth': 3.5},
+    'rpc3_parallel': {'marker': 'P', 'linestyle': '-', 'color': MODE_COLORS['rpc3_parallel'], 'label': MODE_LABELS_SHORT['rpc3_parallel'] + ' (3 calls, parallel)', 'linewidth': 3.5}
 }
 
 for mode, style in MODE_STYLES.items():
@@ -1138,18 +1159,17 @@ if 'latency_per_query_ms' in df.columns:
             axis=1
         )
         
-        # ✅ FIX: Logical ordering (serial → binpacked → parallel w=1,2,3,4)
+        # ✅ FIX: Logical ordering using centralized MODE_SORT_ORDER
         def mode_sort_key(row):
             mode = row['fetch_mode']
             workers = row.get('parallel_workers', 0)
-            if mode == 'serial':
-                return (0, 0)
-            elif mode == 'binpacked':
-                return (1, 0)
-            elif mode == 'binpacked_parallel':
-                return (2, workers if pd.notna(workers) else 0)
+            base_order = MODE_SORT_ORDER.get(mode, 99)  # Unknown modes go to end
+            
+            # For parallel mode, secondary sort by worker count
+            if mode == 'binpacked_parallel':
+                return (base_order, workers if pd.notna(workers) else 0)
             else:
-                return (3, 0)
+                return (base_order, 0)
         
         cost_data['_sort_key'] = cost_data.apply(mode_sort_key, axis=1)
         cost_data = cost_data.sort_values('_sort_key')
@@ -1159,7 +1179,7 @@ if 'latency_per_query_ms' in df.columns:
         bars = ax.bar(
             range(len(cost_data)),
             cost_data['latency_per_query_ms'],
-            color=[COLORS['bad'] if x == 'serial' else COLORS['lakebase'] for x in cost_data['fetch_mode']],
+            color=[MODE_COLORS.get(x, COLORS['lakebase']) for x in cost_data['fetch_mode']],
             edgecolor='black',
             linewidth=1.5
         )
@@ -1458,8 +1478,8 @@ cold_points = df[df['hot_traffic_pct'] == 0].copy()
 
 # CRITICAL: For parallel mode, filter to w=3 specifically before deduplicating
 if 'parallel_workers' in cold_points.columns:
-    # Keep serial, binpacked, and RPC as-is, but filter parallel to w=3 only
-    base_modes = ['serial', 'binpacked', 'rpc_request_json']
+    # Keep serial, binpacked, RPC modes as-is, but filter parallel to w=3 only
+    base_modes = ['serial', 'binpacked', 'rpc_request_json', 'rpc3_parallel']
     base = cold_points[cold_points['fetch_mode'].isin(base_modes)]
     parallel_w3 = cold_points[(cold_points['fetch_mode'] == 'binpacked_parallel') & 
                                (cold_points['parallel_workers'] == 3)]
@@ -1567,6 +1587,8 @@ for mode in modes:
             fallback = 30
         elif mode == 'rpc_request_json':
             fallback = 1
+        elif mode == 'rpc3_parallel':
+            fallback = 3
         else:
             fallback = 10
         queries = mode_df.iloc[0].get('queries_per_request', fallback)
@@ -1611,23 +1633,17 @@ if queries_data:
                    bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
                             edgecolor='#357FF5', alpha=0.95, linewidth=2))
     
-    # Add HERO annotation for Serial → RPC (if RPC data available)
-    if len(queries_data) >= 4:
+    # Add progression annotations
+    if len(queries_data) >= 5:
+        # Show progression: 30 → 10 → 3 → 1
         serial_q = queries_data[0]['queries']
-        rpc_q = queries_data[3]['queries']
         
-        # Guard against division by zero
-        if serial_q > 0:
-            rpc_reduction_pct = ((serial_q - rpc_q) / serial_q * 100)
-            
-            # Dramatic annotation in cyan for RPC breakthrough
-            ax.annotate('', xy=(2.5, serial_q - 2), xytext=(2.5, rpc_q + 0.5),
-                       arrowprops=dict(arrowstyle='<->', color='#00D4FF', lw=3, alpha=0.9))
-            ax.text(2.7, (serial_q + rpc_q) / 2, f'-{rpc_reduction_pct:.0f}%\nRPC Win',
-                   ha='left', va='center', fontsize=13, fontweight='800',
-                   color='#00D4FF', 
-                   bbox=dict(boxstyle='round,pad=0.6', facecolor='white', 
-                            edgecolor='#00D4FF', alpha=0.98, linewidth=2.5))
+        # Add narrative text showing the progression
+        ax.text(0.5, 1.08, '30 → 10 → 3 → 1', 
+               ha='center', va='bottom', fontsize=16, fontweight='800',
+               color='#357FF5', transform=ax.transAxes,
+               bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
+                        edgecolor='#357FF5', alpha=0.95, linewidth=2))
 
     # Professional styling - consistent with other charts
     ax.set_ylabel('Queries Per Request', fontsize=12, fontweight='600', labelpad=10, color='#475569')
