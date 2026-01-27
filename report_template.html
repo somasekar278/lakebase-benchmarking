@@ -1639,11 +1639,6 @@
               <strong>9–12 point lookups</strong> across a feature-table family (≈30 total lookups per request).
             </p>
 
-            <div class="callout" style="max-width: 100%;">
-              <strong>This workload punishes fan-out, not throughput.</strong><br/>
-              Even if individual lookups are fast, the request tail is dominated by the chance that
-              <em>at least one</em> lookup is slow—especially under predominantly cold reads.
-            </div>
 
             <!-- Asymmetric layout: Large fan-out schematic + smaller tail amplification -->
             <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-top: 12px;">
@@ -1708,9 +1703,11 @@
               </div>
 
               <div class="content-card" style="padding: 16px; display: flex; flex-direction: column; justify-content: center;">
-                <p style="margin: 0; font-size: 14px; line-height: 1.6; color: var(--muted);">
-                  Tail risk increases with fan-out; P99 is governed by the slowest component.
-                </p>
+                <div class="callout" style="margin: 0;">
+                  <strong>This workload punishes fan-out, not throughput.</strong><br/>
+                  Even if individual lookups are fast, the request tail is dominated by the chance that
+                  <em>at least one</em> lookup is slow—especially under predominantly cold reads.
+                </div>
               </div>
             </div>
 
