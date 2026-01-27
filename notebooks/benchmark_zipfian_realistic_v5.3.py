@@ -84,7 +84,7 @@ dbutils.widgets.text("total_keys_per_entity", "10000", "Total Keys Per Entity")
 dbutils.widgets.text("hot_key_percent", "1", "Hot Key % of Dataset")
 dbutils.widgets.text("explain_sample_rate", "0", "Post-run EXPLAIN sample size (0=disabled)")  # kept for future extension
 dbutils.widgets.dropdown("run_all_modes", "true", ["true", "false"], "Run All Modes Sequentially")
-dbutils.widgets.dropdown("fetch_mode", "serial", ["serial", "binpacked", "binpacked_parallel"], "Fetch Mode (if run_all_modes=false)")
+dbutils.widgets.dropdown("fetch_mode", "serial", ["serial", "binpacked", "binpacked_parallel", "rpc_request_json"], "Fetch Mode (if run_all_modes=false)")
 dbutils.widgets.text("reuse_run_id", "", "Reuse Keys from Run ID (empty=sample new)")
 dbutils.widgets.text("parallel_workers", "1,2,3,4", "Parallel Workers (comma-separated)")
 dbutils.widgets.dropdown("log_query_timings", "true", ["true", "false"], "Log Slow Queries")
@@ -134,6 +134,7 @@ if RUN_ALL_MODES:
     MODE_CONFIGS.append({"mode": "binpacked", "workers": None})
     for workers in PARALLEL_WORKERS:
         MODE_CONFIGS.append({"mode": "binpacked_parallel", "workers": workers})
+    MODE_CONFIGS.append({"mode": "rpc_request_json", "workers": None})
 else:
     if FETCH_MODE == "binpacked_parallel":
         for workers in PARALLEL_WORKERS:
@@ -148,12 +149,15 @@ def get_mode_label(mode, workers):
         return "Bin-packed (10 UNION ALL queries, serial)"
     elif mode == "binpacked_parallel":
         return f"Bin-packed + Parallel (10 queries, {workers} workers)"
+    elif mode == "rpc_request_json":
+        return "RPC Request JSON (1 server-side function call)"
     return mode
 
 FETCH_MODE_LABELS = {
     "serial": "Serial (30 queries, baseline)",
     "binpacked": "Bin-packed (10 UNION ALL queries, serial)",
-    "binpacked_parallel": "Bin-packed + Parallel (10 queries)"
+    "binpacked_parallel": "Bin-packed + Parallel (10 queries)",
+    "rpc_request_json": "RPC Request JSON (1 server-side function call)"
 }
 
 print("="*80)
@@ -1296,7 +1300,69 @@ def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_w
 
     return entity_timings, 0, gantt_data, query_timings, total_queries, pool_wait_times
 
+def fetch_features_rpc_request(conn, entities_with_keys, iteration_idx=0, request_start=None, log_query_timings=False, slow_threshold_ms=40):
+    """Fetch features using a single server-side RPC call that returns JSONB.
+    
+    This mode collapses the entire request (all 3 entities) into ONE function call.
+    The server executes all UNION ALL queries internally and returns structured JSON.
+    
+    Args:
+        conn: Database connection
+        entities_with_keys: List of entity dicts with keys ['entity', 'hashkey', 'tables']
+        iteration_idx: Current iteration number
+        request_start: Request start time (for timing)
+        log_query_timings: Whether to log slow queries
+        slow_threshold_ms: Threshold for slow query logging (not used for RPC mode)
+    
+    Returns:
+        tuple: (entity_timings, io_blocks, gantt_data, query_timings, queries_count)
+    """
+    if request_start is None:
+        request_start = time.perf_counter()
+    
+    # Extract keys in entity order (card_fingerprint, customer_email, cardholder_name)
+    entity_order = ["card_fingerprint", "customer_email", "cardholder_name"]
+    keys_dict = {e["entity"]: e["hashkey"] for e in entities_with_keys}
+    
+    # Build parameter tuple in correct order
+    params = tuple(keys_dict[entity] for entity in entity_order)
+    
+    # Execute single RPC call
+    call_start = time.perf_counter()
+    
+    with conn.cursor() as cur:
+        cur.execute("SELECT features.fetch_request_features(%s, %s, %s)", params)
+        result = cur.fetchone()[0]  # Returns JSONB
+    
+    call_end = time.perf_counter()
+    call_latency_ms = (call_end - call_start) * 1000
+    
+    # Estimate payload size
+    payload_bytes = len(json.dumps(result)) if result else 0
+    
+    # For compatibility with existing code, create entity_timings dict
+    # In RPC mode, we can't measure per-entity time server-side without modifying the function
+    # So we report the total call time as a single "entity"
+    entity_timings = {
+        "rpc_call": call_latency_ms
+    }
+    
+    # No gantt data for RPC mode (single call)
+    gantt_data = []
+    
+    # No per-query timings for RPC mode (everything happens server-side)
+    query_timings = []
+    
+    # Queries count = 1 (single function call)
+    queries_count = 1
+    
+    # IO blocks not tracked for RPC mode
+    io_blocks = 0
+    
+    return entity_timings, io_blocks, gantt_data, query_timings, queries_count, payload_bytes
+
 print("✅ Bin-packed fetch functions loaded (serial + parallel)")
+print("✅ RPC request function loaded (single server-side call)")
 
 # COMMAND ----------
 # MAGIC %md
@@ -1484,6 +1550,21 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                                     print(f"            ✅ Committed {slow_query_count} slow queries")
                                 slow_query_count = 0
 
+                    elif current_mode == "rpc_request_json":
+                        entity_timings, io_blocks, gantt_data, query_timings, queries_count, payload_bytes = fetch_features_rpc_request(
+                            conn, entities_for_request, i, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS
+                        )
+                        total_queries_executed += queries_count  # Should be 1
+                        
+                        # RPC mode: single call latency
+                        request_latency_ms = entity_timings.get("rpc_call", 0)
+                        
+                        # Track payload size
+                        payload_size_total += payload_bytes
+                        
+                        # No slow query logging for RPC mode (everything is server-side)
+                        # query_timings will be empty
+
                     if i < GANTT_SAMPLE_SIZE:
                         gantt_samples.append({
                             "iteration": i,
@@ -1509,6 +1590,8 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
 
             if current_mode == "binpacked_parallel":
                 latency_ms = max(entity_timings.values()) if entity_timings else 0
+            elif current_mode == "rpc_request_json":
+                latency_ms = entity_timings.get("rpc_call", 0)
             else:
                 latency_ms = sum(entity_timings.values()) if entity_timings else 0
 
@@ -1599,7 +1682,13 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
         if measured_iters > 0:
             queries_per_request = total_queries_executed / measured_iters
         else:
-            queries_per_request = 30 if current_mode == "serial" else 10
+            # Fallback values by mode
+            if current_mode == "serial":
+                queries_per_request = 30
+            elif current_mode == "rpc_request_json":
+                queries_per_request = 1
+            else:
+                queries_per_request = 10
 
         # Fix #1: non_explain_iters -> measured_iters
         print(f"         📊 Queries/request: {queries_per_request:.1f} (computed from {measured_iters} iterations)")
