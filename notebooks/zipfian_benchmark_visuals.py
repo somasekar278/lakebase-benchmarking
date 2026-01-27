@@ -1861,8 +1861,9 @@ try:
     y_padding = 0.3
     cell_width = 1.5  # Wider cells
     cell_height = 1.0  # Taller cells
+    num_modes = len(heatmap_modes)  # Dynamic number of modes
     
-    ax.set_xlim(-x_padding, 4 * cell_width + x_padding)
+    ax.set_xlim(-x_padding, num_modes * cell_width + x_padding)
     ax.set_ylim(-y_padding, 2 * cell_height + y_padding)
     ax.set_aspect('equal')  # Equal aspect for proper cell proportions
 
@@ -1905,8 +1906,8 @@ try:
                        ha='center', va='center', fontsize=12, fontweight='500', 
                        color='#94A3B8', alpha=0.7)
 
-    # Set labels (adjusted for 4 columns)
-    ax.set_xticks([cell_width * 0.5, cell_width * 1.5, cell_width * 2.5, cell_width * 3.5])
+    # Set labels (dynamic based on number of modes)
+    ax.set_xticks([cell_width * (i + 0.5) for i in range(num_modes)])
     ax.set_xticklabels(heatmap_mode_labels, fontsize=12, fontweight='600', color='#475569')
     ax.set_yticks([cell_height * 0.5, cell_height * 1.5])
     ax.set_yticklabels(['10% Hot\n(Mostly Cold)', '0% Hot\n(Fully Cold)'], fontsize=12, fontweight='600', color='#475569')
