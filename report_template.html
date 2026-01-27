@@ -1421,11 +1421,8 @@
       <div class="tab active" onclick="switchTab('executive-summary', this)">Executive Summary</div>
       <div class="tab" onclick="switchTab('workload-reality', this)">Workload Reality</div>
       <div class="tab" onclick="switchTab('benchmark-design', this)">Benchmark Design</div>
-      <div class="tab" onclick="switchTab('results-latency-hot', this)">Results - Latency</div>
-      <div class="tab" onclick="switchTab('what-dominates-p99', this)">What Dominates P99</div>
-      <div class="tab" onclick="switchTab('binpacking-efficiency', this)">Bin-packing</div>
-      <div class="tab" onclick="switchTab('parallelism-diminishing-returns', this)">Parallelism</div>
-      <div class="tab" onclick="switchTab('overlap-gantt', this)">Gantt View</div>
+      <div class="tab" onclick="switchTab('results-tail', this)">Results & Tail Behavior</div>
+      <div class="tab" onclick="switchTab('exec-strategies', this)">Execution Strategies</div>
       <div class="tab" onclick="switchTab('recommendations-next-steps', this)">Recommendations</div>
       <div class="tab" onclick="switchTab('appendix', this)">Appendix</div>
     </div>
@@ -1850,207 +1847,399 @@ Parallel: L_req ≈ max(L_entity)  (critical path dominates)</code></pre>
     </div>
     <!-- Tab: Benchmark Design -->
     <div id="tab-benchmark-design" class="tab-content">
-      <div class="card">
-        <p class="eyebrow">Benchmark Design</p>
-        <h2 class="section-title">Benchmark design (how we make this defensible)</h2>
-        <p class="section-subtitle">
-          The goal here is credibility: <b>results that engineers trust</b> and EMs can defend.
-          We intentionally model the serving workload the way it actually behaves in production:
-          many small lookups, heavy cache skew, and strict tail latency expectations.
+  
+      <!-- Top purpose banner -->
+      <div class="card" style="margin-bottom: 20px; padding: 20px 24px;">
+        <p class="eyebrow">Benchmark design goal</p>
+        <p class="section-subtitle" style="margin-top: 8px; font-size: 15px; line-height: 1.5;">
+          Measure request-level tail behavior under realistic fan-out and cold-read conditions, while eliminating common benchmarking artifacts.
         </p>
       </div>
 
-      <div class="content-grid two-col">
+      <!-- Three credibility pillars -->
+      <div class="content-grid three-col" style="margin-top: 16px; margin-bottom: 24px;">
         <div class="content-card">
-          <h3 class="card-title">1) Key sampling (avoiding "first N keys" bias)</h3>
-          <p class="card-body">
-            Many benchmarks accidentally sample "easy keys" due to storage order or biased table access patterns.
-            We explicitly prevent that by sampling keys across <b>all tables in each entity fanout</b>.
-          </p>
-
-          <div class="code-callout">
-            <div class="code-title">Random key sampling across all tables</div>
-            <pre class="code-block"><code>def fetch_sample_keys(conn, table, limit):
-    cur.execute(f"""
-        SELECT DISTINCT hash_key
-        FROM {SCHEMA}.{table}
-        TABLESAMPLE SYSTEM (1)
-        LIMIT %s
-    """, (limit,))
-    keys = [r[0] for r in cur.fetchall()]
-
-    # fallback if TABLESAMPLE yields too few keys
-    if len(keys) &lt; limit * 0.8:
-        cur.execute(f"""
-            SELECT DISTINCT hash_key
-            FROM {SCHEMA}.{table}
-            ORDER BY RANDOM()
-            LIMIT %s
-        """, (limit,))
-        keys = [r[0] for r in cur.fetchall()]
-    return keys</code></pre>
-          </div>
-
-          <div class="chart-caption">
-            <b>Why this matters:</b> it prevents sampling bias that would understate P99
-            (e.g., repeatedly querying keys clustered in cache-friendly regions).
-          </div>
-
-          <div class="insight-box">
-            <div class="insight-title">Reproducibility</div>
-            <div class="insight-body">
-              Keys are persisted per-run so the hot/cold sets are consistent across modes (serial vs bin-packed vs parallel),
-              enabling fair comparisons.
-            </div>
-          </div>
+          <h3 style="margin-bottom: 12px; font-size: 15px; font-weight: 700; color: var(--text); text-transform: none;">Workload realism</h3>
+          <ul style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.7; color: var(--muted);">
+            <li><code>SELECT * · LIMIT 1</code> point lookups</li>
+            <li>Independent hot/cold per entity</li>
+            <li>Zipfian key distribution</li>
+          </ul>
         </div>
-
         <div class="content-card">
-          <h3 class="card-title">2) Zipfian hot/cold traffic matrix (workload realism)</h3>
-          <p class="card-body">
-            Real serving traffic is not uniform. It is <b>skewed</b>:
-            some identities are hot, many are cold. We model this by sweeping hot% from fully warm to fully cold.
-          </p>
-
-          <div class="mini-metrics">
-            <div class="mini-metric">
-              <div class="metric-name">Hot/cold sweep</div>
-              <div class="metric-desc">
-                We test a matrix of hot% values to reveal "cliff behavior" as cache effectiveness drops.
-              </div>
-            </div>
-            <div class="mini-metric">
-              <div class="metric-name">Independent per entity</div>
-              <div class="metric-desc">
-                Each request independently chooses hot/cold per entity (realistic mixed-cache behavior).
-              </div>
-            </div>
-            <div class="mini-metric">
-              <div class="metric-name">True cold reads</div>
-              <div class="metric-desc">
-                At 0% hot we sample cold keys <b>without replacement</b> to prevent accidental cache warming.
-              </div>
-            </div>
-          </div>
-
-          <div class="code-callout">
-            <div class="code-title">Independent hot/cold selection (per entity)</div>
-            <pre class="code-block"><code>for entity in ENTITY_NAMES:
-    if random.random() &lt; hot_pct / 100:
-        hashkey = random.choice(entity_keys[entity]["hot"])
-        hot_entities += 1
-    else:
-        hashkey = random.choice(entity_keys[entity]["cold"])</code></pre>
-          </div>
-
-          <div class="chart-caption">
-            <b>Interpretation:</b> This gives us a latency curve (P99 vs hot%)
-            that cleanly separates cache-dominated performance from disk/IO-dominated behavior.
-          </div>
+          <h3 style="margin-bottom: 12px; font-size: 15px; font-weight: 700; color: var(--text); text-transform: none;">Measurement isolation</h3>
+          <ul style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.7; color: var(--muted);">
+            <li>EXPLAIN excluded from latency stats</li>
+            <li>Planning vs execution tracked separately</li>
+            <li>Connection warmup controlled</li>
+          </ul>
+        </div>
+        <div class="content-card">
+          <h3 style="margin-bottom: 12px; font-size: 15px; font-weight: 700; color: var(--text); text-transform: none;">Reproducibility</h3>
+          <ul style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.7; color: var(--muted);">
+            <li>Keys persisted per run</li>
+            <li>Deterministic hot/cold split</li>
+            <li>Run ID attached to all metrics</li>
+          </ul>
         </div>
       </div>
 
-      <div class="content-grid two-col">
-        <div class="content-card">
-          <h3 class="card-title">3) Realistic access pattern: <code>SELECT *</code> + <code>LIMIT 1</code></h3>
-          <p class="card-body">
-            To prevent "index-only illusion" benchmarks, we fetch real data.
-            Serving systems typically need feature payload, not just existence checks.
-          </p>
+      <!-- Bridge text -->
+      <p style="font-size: 13px; color: var(--muted); text-align: center; margin: 20px auto 16px; max-width: 600px;">
+        Each principle above is enforced directly in the benchmark implementation.
+      </p>
 
-          <div class="code-callout">
-            <div class="code-title">Measured query (production-like)</div>
-            <pre class="code-block"><code>query = f"""
-SELECT * 
-FROM {SCHEMA}.{table}
-WHERE hash_key = %s
-LIMIT 1
-"""
-cur.execute(query, (hashkey,))
-row = cur.fetchone()</code></pre>
-          </div>
-
-          <div class="insight-box">
-            <div class="insight-title">What this ensures</div>
-            <div class="insight-body">
-              Measured latency includes tuple fetch cost, potential heap access, and payload transfer —
-              not just index probe speed.
-            </div>
+      <!-- Code callouts -->
+      <div class="content-grid three-col" style="margin-top: 16px; margin-bottom: 24px;">
+        
+        <!-- 1) Key sampling -->
+        <div class="code-callout" style="padding: 16px; display: flex; flex-direction: column;">
+          <div style="font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 10px; text-transform: none;">Sampling across all tables</div>
+          <pre class="code-block" style="margin-bottom: 10px; padding: 12px; line-height: 1.45; flex: 1;"><code>for table in tables:
+    keys.update(fetch_sample_keys(
+        conn, table, sample_size
+    ))</code></pre>
+          <div style="font-size: 12px; color: var(--muted); line-height: 1.5;">
+            Avoids 'first-page keys' artifacts by sampling across the full keyspace.
           </div>
         </div>
 
-        <div class="content-card">
-          <h3 class="card-title">4) No inline EXPLAIN in the latency distribution</h3>
-          <p class="card-body">
-            Inline <code>EXPLAIN (ANALYZE, BUFFERS)</code> changes execution behavior and pollutes latency results.
-            To keep the distribution clean, we measure latency using only the real query path.
-          </p>
-
-          <div class="mini-metrics">
-            <div class="mini-metric">
-              <div class="metric-name">Latency = real query path</div>
-              <div class="metric-desc">No EXPLAIN contamination during the measured loop.</div>
-            </div>
-            <div class="mini-metric">
-              <div class="metric-name">I/O via pg_statio</div>
-              <div class="metric-desc">Reads/hits tracked at schema level for comparability.</div>
-            </div>
-            <div class="mini-metric">
-              <div class="metric-name">Slow query log</div>
-              <div class="metric-desc">Only slow queries are logged for later diagnosis.</div>
-            </div>
+        <!-- 2) EXPLAIN isolation -->
+        <div class="code-callout" style="padding: 16px; display: flex; flex-direction: column;">
+          <div style="font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 10px; text-transform: none;">EXPLAIN isolation</div>
+          <pre class="code-block" style="margin-bottom: 10px; padding: 12px; line-height: 1.45; flex: 1;"><code># EXPLAIN runs post-run on 
+# sampled slow queries
+# latency distribution contains
+# only measured requests</code></pre>
+          <div style="font-size: 12px; color: var(--muted); line-height: 1.5;">
+            Keeps diagnostic overhead out of the latency distribution.
           </div>
+        </div>
 
-          <div class="quote-block">
-            <p class="quote">
-              "We treat EXPLAIN as a diagnostic tool, not a measurement method."
-            </p>
-            <p class="quote-sub">
-              This keeps our latency charts defensible to skeptics.
-            </p>
+        <!-- 3) Key persistence -->
+        <div class="code-callout" style="padding: 16px; display: flex; flex-direction: column;">
+          <div style="font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 10px; text-transform: none;">Persist keys per run</div>
+          <pre class="code-block" style="margin-bottom: 10px; padding: 12px; line-height: 1.45; flex: 1;"><code>persist_keys_per_run(
+    conn, RUN_ID, entity_keys
+)</code></pre>
+          <div style="font-size: 12px; color: var(--muted); line-height: 1.5;">
+            Ensures identical hot/cold keys across modes and reruns.
           </div>
+        </div>
+
+      </div>
+
+      <!-- Intentional exclusions callout -->
+      <div class="callout-card" style="margin-top: 24px; margin-bottom: 24px; padding: 20px 24px; border-left: 3px solid var(--error); background: linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(239, 68, 68, 0.02) 100%); border-radius: 8px;">
+        <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--error); margin-bottom: 6px;">Intentional exclusions</div>
+        <h3 style="font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 12px;">What this benchmark avoids</h3>
+        <div style="font-size: 14px; line-height: 1.7; color: var(--muted);">
+          No EXPLAIN ANALYZE mixed with live latency measurements<br/>
+          No artificial 'cache flush' tricks<br/>
+          No unrealistically narrow projections<br/>
+          No batching beyond production constraints
         </div>
       </div>
 
-      <div class="content-card">
-        <h3 class="card-title">Additional defensibility measures (V5.3)</h3>
-        <div class="grid">
-          <div class="card" style="margin: 0; background: var(--surface-2);">
-            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--brand-2);">Top-up key sampling</h4>
-            <p style="font-size: 14px; color: var(--muted); margin-bottom: 8px;">
-              If initial sampling yields too few unique keys (due to table overlap), we automatically 
-              sample additional rounds until the target is met.
-            </p>
-            <div class="tag ok" style="margin-top: 8px;">Prevents underfill bias</div>
-          </div>
-          
-          <div class="card" style="margin: 0; background: var(--surface-2);">
-            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--brand-2);">Pool wait tracking</h4>
-            <p style="font-size: 14px; color: var(--muted); margin-bottom: 8px;">
-              In parallel mode, we track connection acquisition time separately from query latency
-              to detect pool starvation.
-            </p>
-            <div class="tag info" style="margin-top: 8px;">Diagnoses contention</div>
-          </div>
-          
-          <div class="card" style="margin: 0; background: var(--surface-2);">
-            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--brand-2);">Schema migrations</h4>
-            <p style="font-size: 14px; color: var(--muted); margin-bottom: 8px;">
-              All results tables support <code>ALTER TABLE ... ADD COLUMN IF NOT EXISTS</code> 
-              to handle schema evolution across benchmark versions.
-            </p>
-            <div class="tag ok" style="margin-top: 8px;">Forward compatible</div>
-          </div>
-        </div>
-      </div>
-
+      <!-- Bottom takeaway -->
       <div class="takeaway-banner" style="margin-bottom: 0;">
-        <div class="takeaway-title">Tab takeaway</div>
+        <div class="takeaway-title">Design takeaway</div>
         <div class="takeaway-body">
-          The benchmark is built to be <b>hard to game</b> and easy to defend:
-          realistic fan-out, realistic cache skew, real payload fetch, reproducible key sets, and clean tail latency measurements.
+          This benchmark favors interpretability over peak numbers. Every measurement maps to a request, a keyset, and a concrete execution strategy.
         </div>
       </div>
+
+    </div>
+
+    <!-- Tab: Results & Tail Behavior (NEW - consolidates 5 tabs) -->
+    <div id="tab-results-tail" class="tab-content">
+      
+      <!-- Headline Card -->
+      <div class="card" style="margin-bottom: 24px;">
+        <p class="eyebrow">Results & Tail Behavior</p>
+        <h2 class="section-title">What happens to P99 as hotness changes, and where does the tail come from?</h2>
+        <p class="section-subtitle" style="margin-bottom: 16px;">
+          As cache effectiveness drops (hot% → 0%), P99 latency rises non-linearly due to fan-out amplification and cold I/O.
+          The tail is not uniformly distributed—it's driven by a small subset of entity/table families that dominate the critical path.
+          This section reveals which execution strategies bend the curve and where the tail originates.
+        </p>
+        
+        <div style="background: var(--surface-2); padding: 16px 20px; border-radius: 8px; border-left: 3px solid var(--brand-2);">
+          <div style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 8px;">What to look for:</div>
+          <ul style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.8; color: var(--muted);">
+            <li><b>Steepness of P99 curves</b> — flat = robust to cold traffic; steep = cache-dependent and unstable</li>
+            <li><b>Cold request impact</b> — even 5–10% fully cold requests can dominate tail behavior and SLO violations</li>
+            <li><b>Entity dominance patterns</b> — one entity typically drives P99; this is your optimization roadmap</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 2x2 Diagnostic Chart Grid -->
+      <div class="content-grid two-col" style="margin-bottom: 24px;">
+        
+        <!-- Chart A: Request Latency Distribution (ECDF) -->
+        <div class="content-card">
+          <div class="chart-frame" style="min-height: 400px;">
+            <div class="chart-title">Request latency distribution (ECDF): 10% hot vs 0% hot — Serial mode</div>
+            <img src="data:image/png;base64,{{CHART_LATENCY_ECDF_BASE64}}" alt="Latency ECDF" class="chart-embed" style="min-height: 320px; object-fit: contain;" />
+            <div class="chart-caption">
+              <b>How to read:</b> ECDF shows the full tail shape, not just P99. 
+              Production-realistic traffic (10% hot) creates wide variance—the tail spreads even when medians look acceptable.
+            </div>
+          </div>
+        </div>
+
+        <!-- Chart B: Cold Penalty Quantification -->
+        <div class="content-card">
+          <div class="chart-frame" style="min-height: 400px;">
+            <div class="chart-title">Cold penalty: non-linear tail amplification under mixed reads</div>
+            <img src="data:image/png;base64,{{CHART_COLD_PENALTY_BASE64}}" alt="Cold penalty" class="chart-embed" style="min-height: 320px; object-fit: contain;" />
+            <div class="chart-caption">
+              <b>How to read:</b> P99 rises sharply as hot traffic drops—not from linear per-entity costs, 
+              but from increased probability of encountering at least one slow lookup. This is tail amplification.
+            </div>
+          </div>
+        </div>
+
+        <!-- Chart C: Per-Entity Contribution to Request Latency -->
+        <div class="content-card">
+          <div class="chart-frame" style="min-height: 400px;">
+            <div class="chart-title">Entity contribution to request P99 across hot% (percentage share)</div>
+            <img src="data:image/png;base64,{{CHART_ENTITY_CONTRIBUTION_BASE64}}" alt="Entity contribution" class="chart-embed" style="min-height: 320px; object-fit: contain;" />
+            <div class="chart-caption">
+              <b>How to read:</b> Percentage share shows relative dominance, not absolute time. 
+              The largest segment is your optimization target—a structural bottleneck, not cache sensitivity.
+            </div>
+          </div>
+        </div>
+
+        <!-- Chart D: Strategy Payoff -->
+        <div class="content-card">
+          <div class="chart-frame" style="min-height: 400px;">
+            <div class="chart-title">Strategy payoff: tail improvement by execution mode</div>
+            
+            <!-- Stat chips above chart -->
+            <div style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
+              <div style="padding: 8px 16px; background: #F0FDF4; border: 1px solid #10B981; border-radius: 6px; font-size: 13px; font-weight: 600; color: #047857;">
+                Queries/request: <span style="color: #1E293B;">30 → 10</span> <span style="color: #DC2626;">(−67%)</span>
+              </div>
+              <div style="padding: 8px 16px; background: #EFF6FF; border: 1px solid #3B82F6; border-radius: 6px; font-size: 13px; font-weight: 600; color: #1E40AF;">
+                Critical path: <span style="color: #1E293B;">Σ → max()</span>
+              </div>
+            </div>
+            
+            <img src="data:image/png;base64,{{CHART_BINPACKING_EFFECTIVENESS_BASE64}}" alt="Strategy payoff" class="chart-embed" style="min-height: 320px; object-fit: contain;" />
+            <div class="chart-caption">
+              <b>How to read:</b> Three execution strategies at cold regimes (0–30% hot). 
+              Lower lines = better tail control. Bin-packing and parallelism both reduce P99 through different mechanisms.
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Interpretation Section -->
+      <div class="card" style="margin-bottom: 0;">
+        <h3 class="card-title" style="margin-bottom: 20px;">Interpretation: What the data tells us</h3>
+        
+        <!-- Distribution Shape -->
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 14px; font-weight: 700; color: var(--brand-2); margin-bottom: 8px;">Tail shape and variance</div>
+          <p style="font-size: 14px; line-height: 1.7; color: var(--muted); margin: 0;">
+            The ECDF (cumulative distribution) reveals the full latency spread, not just the P99 snapshot. A steep curve indicates
+            tight clustering (predictable latency), while a long flat tail shows high variance (unpredictable tail events). 
+            At 80% hot, most requests cluster tightly, but the tail extends due to mixed hot/cold fan-out. At 0% hot (fully cold),
+            the distribution widens significantly—every request pays the disk I/O penalty. This quantifies cache dependency:
+            hot traffic yields bounded, predictable latency; cold traffic exposes the structural cost of disk seeks.
+          </p>
+        </div>
+
+        <!-- Cold Penalty Economics -->
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 14px; font-weight: 700; color: var(--error); margin-bottom: 8px;">Cold penalty economics</div>
+          <p style="font-size: 14px; line-height: 1.7; color: var(--muted); margin: 0;">
+            The cold penalty chart quantifies the incremental cost of each cache miss. A request with 3/3 entities hot (fully cached)
+            completes in ~25ms. Each cold entity adds 40–60ms (disk I/O + buffer pool churn). With 30 lookups per request and independent
+            entity caching, even 80% per-entity hot yields 48% of requests with ≥1 cold entity—making the "average case" a mixed scenario.
+            This is why SLA planning must account for cold-path cost, not just hot-path averages. The tail is defined by how often you 
+            encounter cold entities, not the average cache hit rate.
+          </p>
+        </div>
+
+        <!-- Entity-Level Bottlenecks -->
+        <div style="margin-bottom: 20px;">
+          <div style="font-size: 14px; font-weight: 700; color: var(--warning); margin-bottom: 8px;">Entity-level bottlenecks</div>
+          <p style="font-size: 14px; line-height: 1.7; color: var(--muted); margin: 0;">
+            Request latency is rarely evenly distributed across entities. The entity contribution breakdown reveals which entity
+            dominates total request time. Common patterns: (1) One entity dominates at all hot% → schema/index issue;
+            (2) Dominance shifts as hotness drops → specific entity's cold I/O footprint exposed; (3) One entity accounts for >50%
+            of latency → clear optimization target. This turns tail reduction from guesswork into evidence: profile the data, 
+            identify the bottleneck entity, fix that entity's schema/indexes/query plan, and re-measure.
+          </p>
+        </div>
+
+        <!-- Structural Wins from Bin-Packing -->
+        <div style="margin-bottom: 0;">
+          <div style="font-size: 14px; font-weight: 700; color: var(--success); margin-bottom: 8px;">Structural wins from bin-packing</div>
+          <p style="font-size: 14px; line-height: 1.7; color: var(--muted); margin: 0;">
+            Bin-packing reduces fan-out from 30→10 queries by grouping tables into UNION ALL statements. This isn't just a throughput
+            optimization—it's a structural tail improvement. Fewer round trips = fewer opportunities for tail amplification 
+            (P(≥1 slow query) drops from 60% to 30% under N=30 vs N=10 at 3% per-query slow rate). The effectiveness chart shows
+            both the fan-out reduction (left) and the tail latency improvement (right). The win is largest in cold regimes where
+            per-query variance is high—bin-packing shortens the critical path, making tail latency more predictable.
+          </p>
+        </div>
+
+      </div>
+
+      <!-- 
+        ⚠️  CHART GENERATION REQUIREMENTS FOR TAB 4:
+        
+        The following charts need to be generated in zipfian_benchmark_visuals.py:
+        
+        1. CHART_LATENCY_ECDF_BASE64
+           - ECDF (cumulative distribution function) of request latency
+           - Compare 80% hot vs 0% hot for serial mode
+           - X-axis: latency (ms), Y-axis: cumulative probability (0-100%)
+           
+        2. CHART_COLD_PENALTY_BASE64
+           - Bar or line chart showing latency by hot entity count (0/1/2/3 hot)
+           - Use request_mix data or entity timing distributions
+           - Show incremental cost of each cache miss
+           
+        3. CHART_ENTITY_CONTRIBUTION_BASE64
+           - Stacked bar chart showing each entity's contribution to total request latency
+           - Use entity_p99_ms or entity_timing_detail data
+           - X-axis: hot%, Y-axis: latency (ms), stacked by entity (card/email/name)
+           
+        4. CHART_BINPACKING_EFFECTIVENESS_BASE64
+           - Dual-panel chart:
+             - Left: Bar chart of queries/request by mode (serial=30, binpacked=10, parallel=10)
+             - Right: P99 improvement (line or bar) comparing serial vs binpacked at cold regimes
+      -->
+
+    </div>
+
+    <!-- Tab: Parallelism (NEW - focused single story) -->
+    <div id="tab-exec-strategies" class="tab-content">
+      
+      <!-- Title Card -->
+      <div class="card" style="margin-bottom: 32px;">
+        <p class="eyebrow">Execution Strategy</p>
+        <h2 class="section-title">Parallelism: Turning Σ into max() (and why it plateaus)</h2>
+        <p class="section-subtitle">
+          Parallel execution reduces request latency by overlapping entity fan-out — until the critical path and DB contention dominate.
+        </p>
+      </div>
+
+      <!-- 2x2 Grid -->
+      <div class="content-grid two-col" style="margin-bottom: 24px;">
+        
+        <!-- Top-left: Overlap Visualization (Gantt) -->
+        <div class="content-card">
+          <div class="chart-frame" style="min-height: 500px;">
+            <div class="chart-title">Overlap visualization: serial vs parallel execution</div>
+            <img src="data:image/png;base64,{{CHART_GANTT_BASE64}}" alt="Gantt overlap" class="chart-embed" style="min-height: 420px; width: 100%; object-fit: contain;" />
+            <div class="chart-caption">
+              <b>Serial:</b> Request time ≈ sum of lookups<br/>
+              <b>Parallel:</b> Request time ≈ max(entity)
+            </div>
+          </div>
+        </div>
+
+        <!-- Top-right: Workers Sweep (Diminishing Returns) -->
+        <div class="content-card">
+          <div class="chart-frame" style="min-height: 500px;">
+            <div class="chart-title">Workers sweep: diminishing returns after 2-3 workers</div>
+            <img src="data:image/png;base64,{{CHART_CONCURRENCY_BASE64}}" alt="Workers sweep" class="chart-embed" style="min-height: 420px; width: 100%; object-fit: contain;" />
+            <div class="chart-caption">
+              <b>How to read:</b> P99 improves with more workers, but the curve flattens.
+              Most gains achieved by 2–3 workers; beyond that, overhead dominates.
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom-left: Math Callout (Purple Style) -->
+        <div class="content-card">
+          <div style="padding: 24px;">
+            <!-- Purple math callout matching Tab 2 style -->
+            <div style="background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%); 
+                        border-radius: 12px; padding: 24px; color: white; margin-bottom: 20px;">
+              <div style="font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #FCD34D; margin-bottom: 16px;">
+                PARALLEL COST MODEL
+              </div>
+              <div style="background: rgba(255,255,255,0.15); border-radius: 8px; padding: 16px; margin-bottom: 16px; font-family: 'SF Mono', 'Courier New', monospace; font-size: 15px; line-height: 1.8;">
+                <div>Serial: L<sub>req</sub> ≈ Σ L<sub>lookup</sub></div>
+                <div>Parallel: L<sub>req</sub> ≈ max(L<sub>entity</sub>) + overhead</div>
+              </div>
+            </div>
+
+            <!-- 3 Bullets -->
+            <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
+              <li style="padding-left: 24px; position: relative;">
+                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+                Parallelism overlaps independent entity fan-out
+              </li>
+              <li style="padding-left: 24px; position: relative;">
+                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+                Tail becomes "critical path" dominated
+              </li>
+              <li style="padding-left: 24px; position: relative;">
+                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+                Overhead: scheduling + connection + contention
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Bottom-right: What Limits Scaling -->
+        <div class="content-card">
+          <div style="padding: 24px;">
+            <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 20px; color: var(--text);">
+              What limits scaling
+            </h3>
+            
+            <ul style="list-style: none; padding: 0; margin: 0 0 24px 0; font-size: 15px; line-height: 2; color: var(--muted);">
+              <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
+                <strong style="color: var(--text);">DB contention / connection saturation</strong><br/>
+                <span style="font-size: 13px;">As workers increase, shared buffer locks and connection pool pressure grow.</span>
+              </li>
+              <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
+                <strong style="color: var(--text);">Locking / shared buffer pressure</strong><br/>
+                <span style="font-size: 13px;">Parallel queries compete for the same cache lines and row locks.</span>
+              </li>
+              <li style="padding-left: 24px; position: relative;">
+                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
+                <strong style="color: var(--text);">Per-request overhead (client + server)</strong><br/>
+                <span style="font-size: 13px;">Thread creation, context switching, and query planning costs don't parallelize.</span>
+              </li>
+            </ul>
+
+            <div style="background: var(--surface-2); border-left: 3px solid var(--warning); padding: 16px; border-radius: 6px;">
+              <div style="font-size: 13px; font-weight: 700; color: var(--warning); margin-bottom: 8px;">
+                Measured indicator
+              </div>
+              <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
+                Beyond 3 workers, P99 improvement drops below 10% per additional worker — 
+                contention overhead begins to dominate parallelism gains.
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bottom Takeaway -->
+      <div class="takeaway-banner">
+        <div class="takeaway-title">Key takeaway</div>
+        <div class="takeaway-body">
+          Parallelism is a structural win for fan-out workloads, but it's not unbounded. 
+          The optimal worker count is where <b>critical path reduction</b> plateaus and <b>DB contention</b> begins.
+        </div>
+      </div>
+
     </div>
 
     <!-- Tab: Results - Latency vs Hot Traffic % -->
@@ -2117,7 +2306,7 @@ row = cur.fetchone()</code></pre>
               </div>
             </div>
             <div class="chart-caption">
-              <b>Why this is powerful:</b> EMs care about the "worst-case rate", not just the average.
+              <b>Why this is powerful:</b> Production decisions depend on the "worst-case rate", not just the average.
               Even if only 5% of traffic is fully cold, those requests define tail behavior and user experience risk.
             </div>
           </div>
@@ -2210,7 +2399,7 @@ row = cur.fetchone()</code></pre>
           </div>
 
           <div class="insight-box">
-            <div class="insight-title">Why EMs care</div>
+            <div class="insight-title">Optimization roadmap</div>
             <div class="insight-body">
               This is your optimization roadmap. You don't "optimize the system" — you optimize the <b>thing that dominates P99</b>.
               This turns the conversation from opinion to evidence.
@@ -2245,7 +2434,7 @@ row = cur.fetchone()</code></pre>
               <div class="pattern-title">Pattern C — Dominance increases under parallelism</div>
               <div class="pattern-body">
                 If parallel improves average but one entity becomes the bottleneck, you've hit critical-path limits.
-                This is expected: parallel turns "sum" into "max," revealing the slowest entity more clearly.
+                This is expected: parallel turns "sum" into "max," revealing the slowest entity as the dominant factor.
               </div>
             </div>
           </div>
@@ -2559,7 +2748,7 @@ request_latency_ms = max(entity_timings.values())</code></pre>
     <!-- Tab: Overlap Visualization (Gantt) -->
     <div id="tab-overlap-gantt" class="tab-content">
       <div class="card">
-        <p class="eyebrow">Visual Proof</p>
+        <p class="eyebrow">Execution Timeline</p>
         <h2 class="section-title">Overlap visualization: serial "sum" vs parallel "max"</h2>
         <p class="section-subtitle">
           Numbers show outcomes — Gantt shows causality. This visualization makes the latency mechanics intuitive:
@@ -2585,7 +2774,7 @@ request_latency_ms = max(entity_timings.values())</code></pre>
             </div>
 
             <div class="chart-caption">
-              <b>What this proves:</b> even small per-entity tail events compound because they are paid sequentially.
+              <b>What this shows:</b> even small per-entity tail events compound because they are paid sequentially.
             </div>
           </div>
 
@@ -2607,7 +2796,7 @@ gantt_data.append({
           <h3 class="card-title">Parallel execution: overlapping work</h3>
           <p class="card-body">
             In parallel mode, entities overlap. Total request latency is driven by whichever entity finishes last.
-            This reduces "sum" into "max" and exposes bottlenecks more clearly.
+            This reduces "sum" into "max" and exposes bottlenecks by shifting focus to the critical path.
           </p>
 
           <div class="chart-frame">
@@ -2669,8 +2858,8 @@ gantt_data.append({
       <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Tab takeaway</div>
         <div class="takeaway-body">
-          The Gantt view makes the benchmark mechanics undeniable: serial stacks latency, parallel overlaps it,
-          and the critical path entity determines the floor. This is the cleanest bridge from results → action.
+          The Gantt view makes the benchmark mechanics observable: serial stacks latency, parallel overlaps it,
+          and the critical path entity determines the floor. This bridges results to action.
         </div>
       </div>
     </div>
@@ -2688,6 +2877,22 @@ gantt_data.append({
         </p>
       </div>
 
+      <!-- Success Criteria Strip -->
+      <div style="display: flex; gap: 16px; justify-content: center; align-items: center; margin-bottom: 32px; flex-wrap: wrap;">
+        <div style="display: inline-flex; align-items: center; background: linear-gradient(135deg, #10B981 0%, #059669 100%); 
+                    color: white; padding: 10px 20px; border-radius: 24px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 8px rgba(16,185,129,0.3);">
+          <span style="margin-right: 8px;">🎯</span> P99 target: <span style="margin-left: 6px; font-weight: 700;">&lt;100ms</span>
+        </div>
+        <div style="display: inline-flex; align-items: center; background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); 
+                    color: white; padding: 10px 20px; border-radius: 24px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 8px rgba(59,130,246,0.3);">
+          <span style="margin-right: 8px;">⚡</span> Sustained QPS: <span style="margin-left: 6px; font-weight: 700;">500+</span>
+        </div>
+        <div style="display: inline-flex; align-items: center; background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%); 
+                    color: white; padding: 10px 20px; border-radius: 24px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 8px rgba(139,92,246,0.3);">
+          <span style="margin-right: 8px;">💰</span> Cost per 1k requests: <span style="margin-left: 6px; font-weight: 700;">&lt;$0.02</span>
+        </div>
+      </div>
+
       <div class="content-grid two-col">
         <div class="content-card">
           <h3 class="card-title">What works now (based on measured behavior)</h3>
@@ -2696,30 +2901,27 @@ gantt_data.append({
             <div class="rec-item">
               <div class="rec-title">1) Use bin-packing as the default</div>
               <div class="rec-body">
-                It reduces request fan-out dramatically (30 table lookups → ~10 union groups), which directly reduces tail amplification.
-                This is the "highest ROI" lever because it improves both average and tail without changing infrastructure.
+                Reduces fan-out dramatically (30 → 10 queries), directly reducing tail amplification with no infrastructure changes.
               </div>
             </div>
 
             <div class="rec-item">
-              <div class="rec-title">2) Add entity-level parallelism — but stop at the plateau</div>
+              <div class="rec-title">2) Add entity-level parallelism (stop at 2–3 workers)</div>
               <div class="rec-body">
-                Parallelism helps early by converting stacked latency into overlapped latency (Tab 8),
-                but diminishing returns arrive quickly once the critical-path entity dominates (Tab 7).
+                Converts stacked latency into overlapped latency. Diminishing returns arrive once the critical-path entity dominates.
               </div>
             </div>
 
             <div class="rec-item">
-              <div class="rec-title">3) Treat P99 as a probability problem</div>
+              <div class="rec-title">3) Track P99 as a probability problem</div>
               <div class="rec-body">
-                Use slow-query logging (Tab 9) to quantify tail risk and track whether improvements reduce
-                slow event probability (<b>p</b>) or fan-out (<b>n</b>).
+                Use slow-query logging to quantify tail risk. Improvements should reduce slow event probability (p) or fan-out (n).
               </div>
             </div>
           </div>
 
           <div class="insight-box">
-            <div class="insight-title">How to frame this to EMs</div>
+            <div class="insight-title">Executive summary</div>
             <div class="insight-body">
               "We identified the levers that reduce P99 for fan-out workloads: reduce lookups, overlap what remains,
               and then optimize the bottleneck entity's cold path."
@@ -2732,42 +2934,30 @@ gantt_data.append({
 
           <div class="pattern-list">
             <div class="pattern-item">
-              <div class="pattern-title">A) Server-side prepare / plan stability</div>
+              <div class="pattern-title">A) Server-side prepare + async pipelining</div>
               <div class="pattern-body">
-                If planning time is non-trivial (or fluctuates), prepare statements or stabilize query shapes.
-                This is most relevant once query count drops (bin-packed) because planning becomes a larger fraction.
+                Enable prepared statements to stabilize planning time. Add pipelined async per-entity fetching to reduce round trips.
               </div>
             </div>
 
             <div class="pattern-item">
-              <div class="pattern-title">B) Connection management: pool sizing + reuse</div>
+              <div class="pattern-title">B) Connection pool sizing + targeted bottleneck optimization</div>
               <div class="pattern-body">
-                If pool wait increases with workers, you're bottlenecked client-side.
-                Tune max_size, lifetime, and health checks. Track pool wait p95 as a leading indicator.
+                Tune pool size, lifetime, and health checks. Track pool wait P95. Optimize the entity/table driving the critical path.
               </div>
             </div>
 
             <div class="pattern-item">
-              <div class="pattern-title">C) Targeted bottleneck optimization (dominant entity)</div>
+              <div class="pattern-title">C) Cache strategy + indexes for tail-driving entity</div>
               <div class="pattern-body">
-                Use the "What dominates P99?" analysis (Tab 5) to optimize the entity/table family that drives the critical path:
-                indexing, clustering, table layout, row width, toast behavior, and cold-path IO.
+                Validate cache hit rates and index effectiveness for the entity dominating P99. Focus on cold-path IO and row width.
               </div>
             </div>
 
             <div class="pattern-item">
-              <div class="pattern-title">D) Payload discipline (row width + projection)</div>
+              <div class="pattern-title">D) Payload discipline (projection + column filtering)</div>
               <div class="pattern-body">
-                If payload bytes are high, implement column projection (model_projection mode).
-                This reduces IO and CPU per lookup and often improves tail.
-              </div>
-            </div>
-
-            <div class="pattern-item">
-              <div class="pattern-title">E) Async IO / pipelining (if app architecture allows)</div>
-              <div class="pattern-body">
-                If the serving tier can pipeline requests (async DB clients, batched dispatch), you can increase overlap
-                beyond simple thread pools — but only after controlling tail amplification via bin-packing.
+                Implement column projection to reduce IO and CPU per lookup. Measure improvement in tail for high-payload entities.
               </div>
             </div>
           </div>
@@ -2776,14 +2966,14 @@ gantt_data.append({
 
       <div class="content-grid one-col">
         <div class="content-card">
-          <h3 class="card-title">Operational next steps (to make this "production real")</h3>
+          <h3 class="card-title">Operational next steps (production validation)</h3>
 
           <div class="ops-grid">
             <div class="ops-item">
               <div class="ops-title">Sizing & cost</div>
               <div class="ops-body">
-                Use <b>latency per query</b> and <b>queries per request</b> as cost-normalized metrics (Tab 6).
-                Then map to CU sizing assumptions and target QPS.
+                Use <b>latency per query</b> and <b>queries per request</b> as cost-normalized metrics.
+                Map to CU sizing assumptions and target QPS.
               </div>
             </div>
 
@@ -2797,16 +2987,78 @@ gantt_data.append({
             <div class="ops-item">
               <div class="ops-title">Production monitoring</div>
               <div class="ops-body">
-                Track request P99, per-entity latencies, slow query rate, pool wait p95, and cache hit/read ratios.
-                These align directly with the benchmark's causal model.
+                Track request P99, per-entity latencies, slow query rate, pool wait P95, and cache hit/read ratios.
               </div>
             </div>
 
             <div class="ops-item">
               <div class="ops-title">Safety checks</div>
               <div class="ops-body">
-                Guardrails: statement timeouts, retry policy, backpressure, and well-defined fallback behavior
-                for partial entity failures.
+                Guardrails: statement timeouts, retry policy, backpressure, and well-defined fallback for partial failures.
+              </div>
+            </div>
+          </div>
+
+          <!-- Execution Plan Block (Now / Next / Later) -->
+          <div style="background: var(--surface-2); border-radius: 12px; padding: 28px; margin-top: 32px; border: 1px solid var(--border);">
+            <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 24px; color: var(--text);">Execution plan</h3>
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px;">
+              <!-- Now -->
+              <div>
+                <div style="display: inline-block; background: linear-gradient(135deg, #10B981 0%, #059669 100%); 
+                            color: white; padding: 6px 16px; border-radius: 16px; font-size: 13px; font-weight: 700; 
+                            text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">
+                  Now (this week)
+                </div>
+                <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+                  <li style="padding-left: 20px; position: relative; margin-bottom: 10px;">
+                    <span style="position: absolute; left: 0; color: #10B981; font-weight: 700;">•</span>
+                    Enable server-side prepare
+                  </li>
+                  <li style="padding-left: 20px; position: relative;">
+                    <span style="position: absolute; left: 0; color: #10B981; font-weight: 700;">•</span>
+                    Add pipelined async per-entity fetching
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Next -->
+              <div>
+                <div style="display: inline-block; background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%); 
+                            color: white; padding: 6px 16px; border-radius: 16px; font-size: 13px; font-weight: 700; 
+                            text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">
+                  Next (2–4 weeks)
+                </div>
+                <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+                  <li style="padding-left: 20px; position: relative; margin-bottom: 10px;">
+                    <span style="position: absolute; left: 0; color: #3B82F6; font-weight: 700;">•</span>
+                    Validate cache strategy + indexes for tail-driving entity
+                  </li>
+                  <li style="padding-left: 20px; position: relative;">
+                    <span style="position: absolute; left: 0; color: #3B82F6; font-weight: 700;">•</span>
+                    Confirm pool sizing & timeouts
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Later -->
+              <div>
+                <div style="display: inline-block; background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%); 
+                            color: white; padding: 6px 16px; border-radius: 16px; font-size: 13px; font-weight: 700; 
+                            text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">
+                  Later
+                </div>
+                <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+                  <li style="padding-left: 20px; position: relative; margin-bottom: 10px;">
+                    <span style="position: absolute; left: 0; color: #8B5CF6; font-weight: 700;">•</span>
+                    HA/DR validation under load
+                  </li>
+                  <li style="padding-left: 20px; position: relative;">
+                    <span style="position: absolute; left: 0; color: #8B5CF6; font-weight: 700;">•</span>
+                    Cost/QPS sizing sweep
+                  </li>
+                </ul>
               </div>
             </div>
           </div>
@@ -2814,7 +3066,7 @@ gantt_data.append({
           <div class="quote-block">
             <p class="quote">"The benchmark already tells us what to do next: reduce n, overlap the remainder, then fix the bottleneck."</p>
             <p class="quote-sub">
-              If we follow this path, Lakebase becomes a credible replacement for DynamoDB-style fan-out serving.
+              If we follow this path, Lakebase becomes a credible replacement for our current key-value serving baseline in fan-out workloads.
             </p>
           </div>
         </div>
@@ -2823,8 +3075,8 @@ gantt_data.append({
       <div class="takeaway-banner" style="margin-bottom: 0;">
         <div class="takeaway-title">Final takeaway</div>
         <div class="takeaway-body">
-          We now have a defensible methodology and a clear optimization roadmap. The benchmark doesn't just measure latency —
-          it explains P99 mechanics and points directly to the next engineering actions that will move the tail.
+          This provides a repeatable, production-aligned methodology and a clear optimization roadmap. This benchmark doesn't just report P99 — 
+          it explains what drives it and what to change to improve it.
         </div>
       </div>
     </div>
@@ -2849,391 +3101,266 @@ gantt_data.append({
     <div id="tab-appendix" class="tab-content">
       <div class="card">
         <p class="eyebrow">Appendix: Engineering Methodology</p>
-        <h2 class="section-title">How the benchmark works (for internal engineers)</h2>
+        <h2 class="section-title">How the benchmark works</h2>
         <p class="section-subtitle">
-          This appendix explains <b>what the code actually does</b>, with snippets and implementation details.
-          Goal: defensible, reproducible, production-realistic latency measurement.
+          This appendix explains <b>what the code actually does</b>. It addresses common questions about measurement integrity, 
+          key sampling, cache behavior, and reproducibility.
         </p>
       </div>
 
-      <!-- Section 1: Request Construction -->
+      <!-- A. Benchmark Execution Model -->
       <div class="content-card">
-        <h3 class="card-title">1) Request shape: Multi-entity fan-out</h3>
-        <p class="card-body">
-          One "feature request" fetches <b>3 entities</b> (card_fingerprint, customer_email, cardholder_name), 
-          each expanding to 9-12 feature tables. Serial baseline = <b>30 queries per request</b>.
-        </p>
-
-        <div class="code-frame">
-          <div class="code-title">Core request builder (serial mode)</div>
-          <pre class="code-block"><code class="language-python"># Build multi-entity request (independent hot/cold per entity)
-for entity in ENTITY_NAMES:
-    tables = ENTITY_TABLE_GROUPS[entity]
-    keyset = entity_keys[entity]
-    
-    # Independently sample hot vs cold per entity
-    if random.random() &lt; hot_pct / 100:
-        hashkey = random.choice(keyset["hot"])
-        hot_entities += 1
-    else:
-        hashkey = random.choice(keyset["cold"])
-    
-    entities_for_request.append({
-        "entity": entity,
-        "hashkey": hashkey,
-        "tables": tables
-    })</code></pre>
-          <div class="code-caption">
-            <b>Why this matters:</b> Each entity has independent cache state. At 80% hot per entity, 
-            only 51% of requests are "fully hot" (0.8³). Mixed states dominate real traffic.
-          </div>
-        </div>
-
-        <div class="metric-grid">
-          <div class="metric-box">
-            <div class="metric-label">Serial mode</div>
-            <div class="metric-value">30 queries</div>
-            <div class="metric-note">1 SELECT per table</div>
-          </div>
-          <div class="metric-box">
-            <div class="metric-label">Binpacked mode</div>
-            <div class="metric-value">10 queries</div>
-            <div class="metric-note">UNION ALL per feature family</div>
-          </div>
-          <div class="metric-box">
-            <div class="metric-label">Parallel mode</div>
-            <div class="metric-value">10 queries</div>
-            <div class="metric-note">Concurrent via ThreadPoolExecutor</div>
-          </div>
-        </div>
+        <h3 class="card-title">A. Benchmark execution model</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Single request = 3 entities × 9–12 tables (≈30 lookups)
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Serial mode executes all lookups sequentially
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Bin-packed mode reduces lookups via UNION ALL by feature family (30 → 10 queries)
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Parallel mode executes per-entity fetch concurrently (ThreadPoolExecutor, 2–3 workers)
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Request latency definition:
+            <ul style="margin-top: 8px; padding-left: 24px;">
+              <li><b>Serial / bin-packed:</b> sum of entity latencies</li>
+              <li><b>Parallel:</b> max(entity latency) + pool overhead</li>
+            </ul>
+          </li>
+        </ul>
       </div>
 
-      <!-- Section 2: Key Sampling -->
+      <!-- B. Key Sampling and Hot/Cold Modeling -->
       <div class="content-card">
-        <h3 class="card-title">2) Key sampling: Reproducible hot/cold sets</h3>
-        <p class="card-body">
-          Keys are sampled from <b>all tables per entity</b>, deduped, shuffled, then split 99:1 (hot:cold).
-          Saved to <code>zipfian_keys_per_run</code> for run-to-run consistency.
-        </p>
-
-        <div class="code-frame">
-          <div class="code-title">Sampling strategy (TABLESAMPLE + fallback)</div>
-          <pre class="code-block"><code class="language-python">def fetch_sample_keys(conn, table, limit):
-    # Fast path: TABLESAMPLE SYSTEM (probabilistic)
-    cur.execute(f"""
-        SELECT DISTINCT hash_key
-        FROM {SCHEMA}.{table}
-        TABLESAMPLE SYSTEM (1)
-        LIMIT %s
-    """, (limit,))
-    keys = [r[0] for r in cur.fetchall()]
-    
-    # Fallback if under-sampled
-    if len(keys) &lt; limit * 0.8:
-        cur.execute(f"""
-            SELECT DISTINCT hash_key
-            FROM {SCHEMA}.{table}
-            ORDER BY RANDOM()
-            LIMIT %s
-        """, (limit,))
-        keys = [r[0] for r in cur.fetchall()]
-    return keys
-
-# Sample across ALL tables, dedupe, shuffle, split
-keys_set = set()
-for table in entity_tables:
-    keys_set.update(fetch_sample_keys(conn, table, 5000))
-
-keys = list(keys_set)
-random.shuffle(keys)
-
-hot_count = int(len(keys) * 0.99)
-hot_keys = keys[:hot_count]
-cold_keys = keys[hot_count:]</code></pre>
-          <div class="code-caption">
-            <b>Realism fix:</b> At 0% hot, use <i>no-replacement</i> sampling from cold set to force true cache misses.
-          </div>
-        </div>
-      </div>
-
-      <!-- Section 3: Execution Modes -->
-      <div class="content-card">
-        <h3 class="card-title">3) Execution modes: Serial → Binpacked → Parallel</h3>
-        <p class="card-body">
-          Three strategies with <b>identical request shape and keys</b>. Only query structure and execution pattern change.
-        </p>
-
-        <div class="grid">
-          <div class="card" style="margin: 0; background: var(--surface-2);">
-            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--muted-2);">Serial (baseline)</h4>
-            <div class="code-frame" style="margin: 12px 0;">
-              <pre class="code-block" style="font-size: 12px; padding: 12px;"><code>for entity in entities:
-    for table in entity["tables"]:
-        SELECT * FROM {table}
-        WHERE hash_key = %s</code></pre>
-            </div>
-            <p style="font-size: 13px; color: var(--muted); margin: 8px 0 0;">
-              30 queries, sequential. Latency = Σ(query times).
-            </p>
-          </div>
-
-          <div class="card" style="margin: 0; background: var(--surface-2);">
-            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--brand-2);">Binpacked</h4>
-            <div class="code-frame" style="margin: 12px 0;">
-              <pre class="code-block" style="font-size: 12px; padding: 12px;"><code>for entity in entities:
-    for feature_family in families:
-        SELECT * FROM table1
-        WHERE hash_key = %s
-        UNION ALL
-        SELECT * FROM table2
-        WHERE hash_key = %s</code></pre>
-            </div>
-            <p style="font-size: 13px; color: var(--muted); margin: 8px 0 0;">
-              10 queries (UNION ALL). Reduces fan-out by 3×.
-            </p>
-          </div>
-
-          <div class="card" style="margin: 0; background: var(--surface-2);">
-            <h4 style="font-size: 15px; margin-bottom: 10px; color: var(--ok);">Parallel</h4>
-            <div class="code-frame" style="margin: 12px 0;">
-              <pre class="code-block" style="font-size: 12px; padding: 12px;"><code>with ThreadPoolExecutor(w=3) as pool:
-    futures = []
-    for entity in entities:
-        future = pool.submit(
-            fetch_entity_binpacked,
-            entity
-        )
-        futures.append(future)
-    results = [f.result() for f in futures]</code></pre>
-            </div>
-            <p style="font-size: 13px; color: var(--muted); margin: 8px 0 0;">
-              10 queries, concurrent. Latency = max(entity times) + pool overhead.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <!-- Section 4: Timing & Observability -->
-      <div class="content-card">
-        <h3 class="card-title">4) Timing measurement: Per-entity + Gantt-ready</h3>
-        <p class="card-body">
-          We capture <b>start/end timestamps per entity</b> to enable Gantt visualization and diagnose parallel overlap.
-        </p>
-
-        <div class="code-frame">
-          <div class="code-title">Timing capture (parallel mode example)</div>
-          <pre class="code-block"><code class="language-python">entity_timing_detail = []
-
-for iteration in range(iterations):
-    entities_for_request = build_request(entity_keys, hot_pct)
-    
-    iteration_detail = {
-        "iteration": iteration,
-        "entities": []
-    }
-    
-    with ThreadPoolExecutor(max_workers=parallel_workers) as pool:
-        futures = {}
-        for entity_data in entities_for_request:
-            start_time = time.perf_counter()
-            future = pool.submit(fetch_entity_binpacked, conn, entity_data)
-            futures[future] = (entity_data["entity"], start_time)
+        <h3 class="card-title">B. Key sampling and hot/cold modeling</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Keys are sampled from <b>all tables</b> per entity (not a single source table)
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Sampling uses TABLESAMPLE with fallback to ORDER BY RANDOM
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Keys are deduplicated and shuffled before hot/cold split (99:1 Zipfian distribution)
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Hot and cold keys are persisted per run and reused across modes
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Hot/cold choice is made <b>independently per entity per request</b>
+          </li>
+        </ul>
         
-        for future in as_completed(futures):
-            entity_name, start_ms = futures[future]
-            end_ms = (time.perf_counter() - request_start) * 1000
-            
-            iteration_detail["entities"].append({
-                "entity": entity_name,
-                "start_ms": start_ms,
-                "end_ms": end_ms
-            })
-    
-    entity_timing_detail.append(iteration_detail)</code></pre>
-          <div class="code-caption">
-            <b>Stored as JSON:</b> Enables post-run Gantt chart generation showing entity overlap.
-          </div>
-        </div>
-
-        <div class="callout" style="margin-top: 20px;">
-          <strong>Slow query logging:</strong> Queries >40ms are logged to <code>zipfian_slow_query_log</code>
-          with request_id tracing. Post-run EXPLAIN available for diagnosis.
-        </div>
-      </div>
-
-      <!-- Section 5: I/O Measurement -->
-      <div class="content-card">
-        <h3 class="card-title">5) I/O measurement: Buffer hits vs disk reads</h3>
-        <p class="card-body">
-          For serial mode, we use <code>pg_statio_user_tables</code> as an aggregate signal of buffer hits vs reads.
-        </p>
-
-        <div class="code-frame">
-          <div class="code-title">I/O delta calculation</div>
-          <pre class="code-block"><code class="language-sql">-- Capture baseline I/O stats
-SELECT 
-    relname,
-    heap_blks_read,
-    heap_blks_hit
-FROM pg_statio_user_tables
-WHERE schemaname = 'features';
-
--- Run benchmark iterations...
-
--- Capture final I/O stats, compute delta
-SELECT 
-    SUM(heap_blks_read_after - heap_blks_read_before) AS total_blocks_read,
-    SUM(heap_blks_hit_after - heap_blks_hit_before) AS total_blocks_hit
-FROM io_stats_delta;</code></pre>
-          <div class="code-caption">
-            <b>Caveat:</b> I/O measurement is aggregate (not per-request). Used as directional signal for cache behavior.
+        <div style="background: var(--surface-2); border-left: 3px solid var(--brand-2); padding: 16px; border-radius: 6px; margin-top: 20px;">
+          <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
+            <b>Key point:</b> This prevents correlated hotness across entities and avoids artificially warm requests.
           </div>
         </div>
       </div>
 
-      <!-- Section 6: Results Storage -->
+      <!-- C. Cache Behavior and Cold-Read Realism -->
       <div class="content-card">
-        <h3 class="card-title">6) Results tables: What gets saved</h3>
-        <p class="card-body">
-          All metrics are persisted to enable cross-run comparison and post-hoc analysis.
-        </p>
+        <h3 class="card-title">C. Cache behavior and cold-read realism</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            OS page cache cannot be fully flushed from user space
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            No artificial cache warming is performed
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Cache behavior is inferred from:
+            <ul style="margin-top: 8px; padding-left: 24px;">
+              <li>Hot/cold key selection</li>
+              <li>Observed <code>pg_statio_user_tables</code> hit/read ratios</li>
+            </ul>
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            0% hot mode uses <b>no-replacement cold sampling</b> to avoid accidental warming
+          </li>
+        </ul>
+        
+        <div style="background: var(--surface-2); border-left: 3px solid var(--warning); padding: 16px; border-radius: 6px; margin-top: 20px;">
+          <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
+            Fully cold requests represent an upper bound; mixed requests dominate real traffic.
+          </div>
+        </div>
+      </div>
 
+      <!-- D. Measurement Integrity (Critical) -->
+      <div class="content-card">
+        <h3 class="card-title">D. Measurement integrity</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            All latency statistics are collected from <b>measured execution only</b>
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            EXPLAIN ANALYZE is <b>never executed inline</b> during measurement
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Slow queries are logged during execution and analyzed post-run
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            EXPLAIN output is excluded from latency distributions by construction
+          </li>
+        </ul>
+        
+        <div style="background: #FEF3C7; border-left: 4px solid #F59E0B; padding: 18px; border-radius: 6px; margin-top: 20px;">
+          <div style="font-size: 13px; font-weight: 700; color: #92400E; margin-bottom: 8px;">
+            Why this matters
+          </div>
+          <div style="font-size: 14px; color: #78350F; line-height: 1.6;">
+            EXPLAIN ANALYZE changes execution behavior and timing. Separating measurement from diagnosis 
+            prevents contamination of tail latency metrics.
+          </div>
+        </div>
+      </div>
+
+      <!-- E. Tail Amplification Logging -->
+      <div class="content-card">
+        <h3 class="card-title">E. Tail amplification logging</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Slow queries are logged only above a fixed threshold (40ms)
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Logged fields include: entity, table/group, key hotness, query latency
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Used to compute probability of ≥1 slow query per request
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Serial mode is the primary focus for tail amplification analysis
+          </li>
+        </ul>
+        
+        <div style="background: var(--surface-2); border-left: 3px solid var(--muted-2); padding: 16px; border-radius: 6px; margin-top: 20px;">
+          <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
+            <b>Note:</b> In parallel mode, individual query latency is less meaningful than the critical path.
+          </div>
+        </div>
+      </div>
+
+      <!-- F. Reproducibility and Repeatability -->
+      <div class="content-card">
+        <h3 class="card-title">F. Reproducibility and repeatability</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            All runs are tagged with a unique <code>run_id</code>
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Sampled keys are persisted in <code>zipfian_keys_per_run</code> and reusable via <code>reuse_run_id</code>
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Results tables store configuration metadata (mode, workers, hot%, iterations)
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+            Multiple hot/cold regimes are evaluated per run (0%, 10%, 30%, 50%, 80%, 100%)
+          </li>
+        </ul>
+        
+        <div style="background: var(--surface-2); border-left: 3px solid var(--ok); padding: 16px; border-radius: 6px; margin-top: 20px;">
+          <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
+            This allows identical workloads to be replayed across execution modes and environments.
+          </div>
+        </div>
+      </div>
+
+      <!-- G. Known Limitations -->
+      <div class="content-card">
+        <h3 class="card-title">G. Known limitations</h3>
+        <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
+            Does not model cross-request contention at sustained QPS
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
+            Does not simulate network fan-out latency from external services
+          </li>
+          <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
+            <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
+            Focuses on request-level tail behavior, not aggregate throughput saturation
+          </li>
+        </ul>
+        
+        <div style="background: #FEE2E2; border-left: 4px solid #DC2626; padding: 16px; border-radius: 6px; margin-top: 20px;">
+          <div style="font-size: 14px; color: #7F1D1D; line-height: 1.6;">
+            These limitations are intentional to isolate request-level tail behavior.
+          </div>
+        </div>
+      </div>
+
+      <!-- Results Tables Reference -->
+      <div class="content-card">
+        <h3 class="card-title">Results tables</h3>
         <div class="table-responsive">
-          <table class="results-table">
+          <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             <thead>
-              <tr>
-                <th>Table</th>
-                <th>Purpose</th>
-                <th>Key columns</th>
+              <tr style="background: var(--surface-2); border-bottom: 2px solid var(--border);">
+                <th style="padding: 12px; text-align: left; font-weight: 600;">Table</th>
+                <th style="padding: 12px; text-align: left; font-weight: 600;">Purpose</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td><code>zipfian_feature_serving_results_v5</code></td>
-                <td>Main results (one row per mode × hot%)</td>
-                <td>run_id, fetch_mode, hot_traffic_pct, p99_ms, entity_p99_ms (JSON)</td>
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 10px; font-family: monospace; color: var(--brand-2);">zipfian_feature_serving_results_v5</td>
+                <td style="padding: 10px; color: var(--muted);">Main results (one row per mode × hot%)</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 10px; font-family: monospace; color: var(--brand-2);">zipfian_keys_per_run</td>
+                <td style="padding: 10px; color: var(--muted);">Persisted hot/cold key sets per entity</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 10px; font-family: monospace; color: var(--brand-2);">zipfian_slow_query_log</td>
+                <td style="padding: 10px; color: var(--muted);">Queries exceeding threshold (&gt;40ms)</td>
               </tr>
               <tr>
-                <td><code>zipfian_keys_per_run</code></td>
-                <td>Persisted hot/cold key sets per entity</td>
-                <td>run_id, entity, hot_keys (JSON), cold_keys (JSON)</td>
-              </tr>
-              <tr>
-                <td><code>zipfian_slow_query_log</code></td>
-                <td>Queries exceeding threshold (>40ms)</td>
-                <td>run_id, request_id, table_name, query_latency_ms</td>
-              </tr>
-              <tr>
-                <td><code>zipfian_explain_cache</code></td>
-                <td>Post-run EXPLAIN results (optional)</td>
-                <td>run_id, table_name, query_hash, explain_json</td>
+                <td style="padding: 10px; font-family: monospace; color: var(--brand-2);">zipfian_request_timing</td>
+                <td style="padding: 10px; color: var(--muted);">Per-request timing for tail amplification analysis</td>
               </tr>
             </tbody>
           </table>
-        </div>
-
-        <div class="code-frame" style="margin-top: 20px;">
-          <div class="code-title">Query recent runs</div>
-          <pre class="code-block"><code class="language-sql">-- Compare P99 across modes at 50% hot
-SELECT 
-    run_id,
-    fetch_mode,
-    parallel_workers,
-    p99_ms,
-    avg_cache_score
-FROM features.zipfian_feature_serving_results_v5
-WHERE hot_traffic_pct = 50
-ORDER BY run_ts DESC, fetch_mode, parallel_workers;</code></pre>
-        </div>
-      </div>
-
-      <!-- Section 7: Defensibility Checklist -->
-      <div class="content-card">
-        <h3 class="card-title">7) Defensibility checklist</h3>
-        <p class="card-body">
-          What makes this benchmark credible for production evaluation?
-        </p>
-
-        <div class="checklist-grid">
-          <div class="checklist-item">
-            <div class="checklist-icon">✓</div>
-            <div class="checklist-content">
-              <div class="checklist-title">Real payload fetch</div>
-              <div class="checklist-text">Uses <code>SELECT *</code> to include heap fetch + row materialization cost (not just index lookups)</div>
-            </div>
-          </div>
-
-          <div class="checklist-item">
-            <div class="checklist-icon">✓</div>
-            <div class="checklist-content">
-              <div class="checklist-title">Production key distribution</div>
-              <div class="checklist-text">Keys sampled across ALL tables (not cherry-picked hot keys). Zipfian 99:1 split matches observed skew.</div>
-            </div>
-          </div>
-
-          <div class="checklist-item">
-            <div class="checklist-icon">✓</div>
-            <div class="checklist-content">
-              <div class="checklist-title">Independent entity cache state</div>
-              <div class="checklist-text">Each entity samples hot/cold independently, creating realistic mixed cache scenarios.</div>
-            </div>
-          </div>
-
-          <div class="checklist-item">
-            <div class="checklist-icon">✓</div>
-            <div class="checklist-content">
-              <div class="checklist-title">Connection reuse + keepalive</div>
-              <div class="checklist-text">Persistent connections with schema refresh to avoid connection overhead in measurements.</div>
-            </div>
-          </div>
-
-          <div class="checklist-item">
-            <div class="checklist-icon">✓</div>
-            <div class="checklist-content">
-              <div class="checklist-title">No inline EXPLAIN</div>
-              <div class="checklist-text">Avoids query plan pollution. Optional post-run EXPLAIN for diagnosis.</div>
-            </div>
-          </div>
-
-          <div class="checklist-item">
-            <div class="checklist-icon">✓</div>
-            <div class="checklist-content">
-              <div class="checklist-title">Run-to-run reproducibility</div>
-              <div class="checklist-text">Keys are persisted per run_id. Can reuse keys via <code>reuse_run_id</code> parameter.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Source Code Reference -->
-      <div class="content-card">
-        <h3 class="card-title">Source code reference</h3>
-        <div class="reference-links">
-          <div class="reference-item">
-            <div class="reference-title">📄 Benchmark script</div>
-            <div class="reference-path"><code>{{BENCHMARK_NOTEBOOK}}</code></div>
-            <div class="reference-desc">Main benchmark implementation (V5.3)</div>
-          </div>
-          <div class="reference-item">
-            <div class="reference-title">📊 Visualization script</div>
-            <div class="reference-path"><code>{{VISUALS_NOTEBOOK}}</code></div>
-            <div class="reference-desc">Chart generation and report builder</div>
-          </div>
-          <div class="reference-item">
-            <div class="reference-title">🔧 Utility modules</div>
-            <div class="reference-path"><code>utils/pipelined_load.py</code>, <code>utils/feature_server.py</code></div>
-            <div class="reference-desc">Helper functions for parallel execution and data loading</div>
-          </div>
         </div>
       </div>
 
       <!-- Takeaway -->
       <div class="takeaway-banner" style="margin-bottom: 0;">
-        <div class="takeaway-title">Methodology takeaway</div>
+        <div class="takeaway-title">Methodology summary</div>
         <div class="takeaway-body">
           This benchmark measures <b>request-level tail latency under realistic fan-out and cache skew</b>.
-          Key design choices (SELECT *, independent entity sampling, no inline EXPLAIN) prioritize production fidelity over microbenchmark speed.
-          All metrics are persisted and reproducible via run_id.
+          Key design choices (independent entity sampling, no inline EXPLAIN, no-replacement cold sampling) 
+          prevent measurement artifacts. All metrics are persisted and reproducible via <code>run_id</code>.
         </div>
       </div>
     </div>
