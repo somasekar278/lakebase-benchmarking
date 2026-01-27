@@ -361,19 +361,31 @@ def reset_pg_stats(conn):
 def flush_cache(conn):
     """
     Reset session state between modes (production-grade approach):
-    - DISCARD ALL to clear session state
+    - DISCARD ALL to clear session state (prepared statements, temp tables, etc.)
     - Short cooldown pause
+    
+    Note: This does NOT flush PostgreSQL shared buffers or OS page cache.
+    Cache behavior is driven by hot/cold keys and normal buffer pool management.
     """
     print("🔄 Resetting session state...")
+    
+    # Ensure we're not inside a transaction block
     try:
+        conn.rollback()
+    except Exception:
+        pass
+    
+    original_autocommit = conn.autocommit
+    try:
+        conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("DISCARD ALL")
-            conn.commit()
         print("   ✅ Session state cleared (DISCARD ALL)")
     except Exception as e:
         print(f"   ⚠️  Could not discard session state: {e}")
-        conn.rollback()
-
+    finally:
+        conn.autocommit = original_autocommit
+    
     time.sleep(2)
     print("   ℹ️  True OS cache flush not possible from PostgreSQL")
     print("   ℹ️  Cache behavior measured via pg_statio (buffer hits vs reads)")

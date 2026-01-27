@@ -14,7 +14,7 @@ resources:
           existing_cluster_id: "0120-120746-h595w64t"
           
           notebook_task:
-            notebook_path: ../notebooks/load_schema_from_ddl.py
+            notebook_path: ../notebooks/generate_csvs.py
             base_parameters:
               lakebase_host: ${var.lakebase_host}
               lakebase_database: ${var.lakebase_database}
@@ -61,18 +61,32 @@ resources:
         on_success:
           - ${workspace.current_user.userName}
     
-    # ZIPFIAN MULTI-ENTITY BENCHMARK WITH VISUALIZATIONS (V3 - Production Grade)
+    # ZIPFIAN MULTI-ENTITY BENCHMARK WITH VISUALIZATIONS (V5.4 - Production Grade + RPC Mode)
     zipfian_benchmark_full:
-      name: "[${bundle.target}] Zipfian Multi-Entity Benchmark V3 + Visualizations"
-      description: "Run production-grade multi-entity Zipfian benchmark (100% → 0% hot traffic) with EXPLAIN sampling, error handling, and visualizations"
+      name: "[${bundle.target}] Zipfian Multi-Entity Benchmark V5.4 + RPC + Visualizations"
+      description: "Run production-grade multi-entity Zipfian benchmark (100% → 0% hot traffic) with all 4 modes including RPC"
       
       tasks:
-        - task_key: run_zipfian_benchmark
-          description: "Task 1: Run Multi-Entity Zipfian Benchmark V3 (9 hot/cold ratios)"
+        - task_key: get_last_run_id
+          description: "Task 0: Get Latest Run ID for Key Reuse"
           existing_cluster_id: "0120-120746-h595w64t"
           
           notebook_task:
-            notebook_path: ../notebooks/benchmark_zipfian_realistic_v3.py
+            notebook_path: ../get_last_run_id.py
+            base_parameters:
+              dbhost: ${var.lakebase_host}
+              dbport: "5432"
+          
+          max_retries: 0
+        
+        - task_key: run_zipfian_benchmark
+          description: "Task 1: Run Multi-Entity Zipfian Benchmark V5.4 (9 hot/cold ratios, 4 modes)"
+          depends_on:
+            - task_key: get_last_run_id
+          existing_cluster_id: "0120-120746-h595w64t"
+          
+          notebook_task:
+            notebook_path: ../notebooks/benchmark_zipfian_realistic_v5.4.py
             base_parameters:
               lakebase_host: ${var.lakebase_host}
               lakebase_database: ${var.lakebase_database}
@@ -82,10 +96,12 @@ resources:
               iterations_per_run: "1000"
               total_keys_per_entity: "10000"
               hot_key_percent: "1"
-              explain_sample_rate: "999999"
               run_all_modes: "true"
               fetch_mode: "serial"
-              reuse_run_id: "8e5d19d6"
+              reuse_run_id: "PLACEHOLDER_SET_MANUALLY"
+              parallel_workers: "1,2,3,4"
+              log_query_timings: "true"
+              slow_query_threshold_ms: "40"
           
           libraries:
             - pypi:
