@@ -1638,9 +1638,9 @@ if queries_data:
         # Show progression: 30 → 10 → 3 → 1
         serial_q = queries_data[0]['queries']
         
-        # Add narrative text showing the progression
-        ax.text(0.5, 1.08, '30 → 10 → 3 → 1', 
-               ha='center', va='bottom', fontsize=16, fontweight='800',
+        # Add narrative text showing the progression (positioned inside chart area)
+        ax.text(0.5, 0.88, '30 → 10 → 3 → 1', 
+               ha='center', va='center', fontsize=16, fontweight='800',
                color='#357FF5', transform=ax.transAxes,
                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
                         edgecolor='#357FF5', alpha=0.95, linewidth=2))
