@@ -1708,13 +1708,8 @@
               </div>
 
               <div class="content-card" style="padding: 16px; display: flex; flex-direction: column; justify-content: center;">
-                <h4 style="margin: 0 0 12px 0;">Tail amplification (intuition)</h4>
-                <div class="math-note" style="margin: 0;">
-                  P(≥1 slow) = 1 − (1 − p)<sup>n</sup>
-                </div>
-                <p style="margin: 12px 0 0 0; font-size: 14px; line-height: 1.6;">
-                  With <strong>n ≈ 30</strong> lookups per request, even a small per-lookup slow rate <strong>p</strong>
-                  becomes visible at the request level.
+                <p style="margin: 0; font-size: 14px; line-height: 1.6; color: var(--muted);">
+                  Tail risk increases with fan-out; P99 is governed by the slowest component.
                 </p>
               </div>
             </div>
@@ -1819,7 +1814,51 @@
               </div>
             </div>
 
-            <h3 style="margin-top: 20px;">What this enables</h3>
+            <!-- Strategy Comparison Table -->
+            <div style="margin-top: 24px;">
+              <h3 style="margin-bottom: 8px;">Strategy decision framework</h3>
+              <p style="margin: 0 0 12px 0; font-size: 14px; line-height: 1.5; color: var(--muted);">
+                At P99, different strategies fail for different reasons. This table summarizes the dominant bottleneck and the regime where each strategy performs best.
+              </p>
+              
+              <table style="width: 100%; border-collapse: collapse; font-size: 14px; background: var(--surface); border-radius: var(--radius-sm); overflow: hidden;">
+                <thead>
+                  <tr style="background: rgba(255,255,255,.04);">
+                    <th style="text-align: left; padding: 12px; font-weight: 600; border-bottom: 1px solid var(--border);">Strategy</th>
+                    <th style="text-align: left; padding: 12px; font-weight: 600; border-bottom: 1px solid var(--border);">Dominant P99 Cost</th>
+                    <th style="text-align: left; padding: 12px; font-weight: 600; border-bottom: 1px solid var(--border);">Best Used When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border);">Serial / Bin-packed</td>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border);">Fan-out tail amplification</td>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border); color: var(--muted);">Never suitable for low-latency serving</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border);">RPC (single SP)</td>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border);">Sum of server-side cold I/O</td>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border);">Mostly-hot workloads</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border);">Parallel (client-side)</td>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border);">RTT + connection pool contention</td>
+                    <td style="padding: 12px; border-bottom: 1px solid var(--border);">Cold I/O dominates</td>
+                  </tr>
+                  <tr style="background: rgba(0,255,178,.05);">
+                    <td style="padding: 12px; font-weight: 600;">RPC × Entity (parallel SPs)</td>
+                    <td style="padding: 12px;"><strong>Max(server cold I/O)</strong></td>
+                    <td style="padding: 12px;">Likely optimal at 0–10% hot</td>
+                  </tr>
+                </tbody>
+              </table>
+              
+              <p style="margin: 8px 0 0 0; font-size: 12px; color: var(--muted-2); font-style: italic;">
+                "Best used when" refers to request-level tail behavior (P99), not average latency.
+              </p>
+            </div>
+
+            <h3 style="margin-top: 24px;">What this enables</h3>
             <p style="margin: 0;">
               If Lakebase holds the request-level tail under this fan-out pattern, it can serve as a reliable online
               feature store layer while consolidating governance and analytics on the Databricks platform.
