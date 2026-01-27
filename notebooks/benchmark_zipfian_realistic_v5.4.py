@@ -996,11 +996,7 @@ def ensure_entity_rpc_functions(conn):
                     'client_id_cardholder_name_clean__time_since__365d',
                     (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__time_since__365d t WHERE hash_key = hash_key_param LIMIT 1),
                     'client_id_cardholder_name_clean__time_since__90d',
-                    (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__time_since__90d t WHERE hash_key = hash_key_param LIMIT 1),
-                    'client_id_cardholder_name_clean__txn_volume__30d',
-                    (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__txn_volume__30d t WHERE hash_key = hash_key_param LIMIT 1),
-                    'client_id_cardholder_name_clean__txn_volume__365d',
-                    (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__txn_volume__365d t WHERE hash_key = hash_key_param LIMIT 1)
+                    (SELECT to_jsonb(t) FROM {SCHEMA}.client_id_cardholder_name_clean__time_since__90d t WHERE hash_key = hash_key_param LIMIT 1)
                 );
             $$;
         """)
