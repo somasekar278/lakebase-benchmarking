@@ -460,9 +460,9 @@ for mode, style in MODE_STYLES.items():
                          edgecolor=style['color'], alpha=0.85, linewidth=1.2)
             )
 
-# Add legend after all elements are drawn (better positioning)
-ax.legend(fontsize=10, loc='upper right', framealpha=0.95, edgecolor='#E2E8F0', 
-         fancybox=False, bbox_to_anchor=(0.98, 0.98))
+# Add legend after all elements are drawn (positioned on left where there's space)
+ax.legend(fontsize=10, loc='upper left', framealpha=0.95, edgecolor='#E2E8F0', 
+         fancybox=False, bbox_to_anchor=(0.02, 0.98))
 
 # Clean up spines
 for spine in ax.spines.values():
