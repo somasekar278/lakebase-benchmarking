@@ -2181,27 +2181,29 @@ ax.set_title('Expected Request Mix: "Mixed" Requests Are the Norm (Not the Excep
 ax.set_xticks(x)
 ax.set_xticklabels([f'{h}%' for h in hot_pct_values], fontsize=10, color='#64748B')
 ax.set_ylim(0, 100)
-ax.legend(loc='upper left', fontsize=11, framealpha=0.95, edgecolor='#E2E8F0', fancybox=False, ncol=2)
+ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='#E2E8F0', fancybox=False, ncol=2)
 ax.grid(True, alpha=0.15, axis='y', linewidth=1, color='#CBD5E1')
 ax.set_axisbelow(True)
 ax.set_facecolor('#FAFAFA')
 fig.patch.set_facecolor('white')
 ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
 
-# Highlight 80% hot case (production-realistic)
+# Highlight 80% hot case (production-realistic) - moved inside chart and changed to dark red
 highlight_idx = hot_pct_values.index(80)
-ax.axvline(highlight_idx, color='#357FF5', linestyle='--', linewidth=2, alpha=0.5, zorder=1)
-ax.text(highlight_idx, 105, '← Production scenario\n(80% hot per entity)',
-       ha='center', va='bottom', fontsize=9, fontweight='600', color='#357FF5')
+ax.axvline(highlight_idx, color='#DC2626', linestyle='--', linewidth=2, alpha=0.6, zorder=1)
+ax.text(highlight_idx, 50, 'Production scenario\n(80% hot per entity)',
+       ha='center', va='center', fontsize=10, fontweight='700', color='#DC2626',
+       bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
+                edgecolor='#DC2626', linewidth=1.5, alpha=0.95))
 
-# Add insight annotations
+# Add insight annotations - moved up to avoid x-axis overlap
 # Calculate actual values at 80% hot
 p80 = 0.8
 fully_hot_80 = (p80 ** 3) * 100
 fully_cold_80 = ((1 - p80) ** 3) * 100
 mixed_80 = 100 - fully_hot_80 - fully_cold_80
 
-fig.text(0.15, 0.12, 
+fig.text(0.15, 0.20, 
          f'💡 At 80% hot (production):\n'
          f'• Fully hot: {fully_hot_80:.1f}% (cache wins)\n'
          f'• Mixed (1-2 cold): {mixed_80:.1f}% (most common!)\n'
@@ -2217,6 +2219,8 @@ for spine in ax.spines.values():
     spine.set_linewidth(1)
 
 plt.tight_layout(pad=1.5)
+# Reduce left margin to eliminate blank space
+plt.subplots_adjust(left=0.08)
 plt.savefig('/tmp/zipfian_request_mix.png', dpi=150, facecolor='white')
 print("   ✅ Saved: /tmp/zipfian_request_mix.png")
 plt.close()
