@@ -2014,20 +2014,22 @@ ax.set_axisbelow(True)
 ax.set_facecolor('#FAFAFA')
 fig.patch.set_facecolor('white')
 
-# Add insight box
-fig.text(0.15, 0.15, 
-         '💡 Why this matters: Request P99 is driven by the slowest lookup across all 30.\n'
-         'Even if 29 lookups are fast (1ms), one slow lookup (100ms) dominates the tail.',
-         ha='left', va='top', fontsize=10, fontweight='500', color='#475569',
-         bbox=dict(boxstyle='round,pad=0.8', facecolor='white', 
-                  edgecolor='#E2E8F0', linewidth=1.5))
-
 # Clean up spines
 for spine in ax.spines.values():
     spine.set_edgecolor('#E2E8F0')
     spine.set_linewidth(1)
 
+# Add more bottom padding for the insight box
 plt.tight_layout(pad=1.5)
+plt.subplots_adjust(bottom=0.18)
+
+# Add insight box (positioned after tight_layout to avoid overlap)
+fig.text(0.15, 0.06, 
+         '💡 Why this matters: Request P99 is driven by the slowest lookup across all 30.\n'
+         'Even if 29 lookups are fast (1ms), one slow lookup (100ms) dominates the tail.',
+         ha='left', va='bottom', fontsize=10, fontweight='500', color='#475569',
+         bbox=dict(boxstyle='round,pad=0.8', facecolor='white', 
+                  edgecolor='#E2E8F0', linewidth=1.5))
 plt.savefig('/tmp/zipfian_fanout_breakdown.png', dpi=150, facecolor='white')
 print("   ✅ Saved: /tmp/zipfian_fanout_breakdown.png")
 plt.close()
