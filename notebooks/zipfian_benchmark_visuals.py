@@ -1816,19 +1816,32 @@ print("📊 Chart 6: Tail Amplification Probability (Serial-only)...")
 # - Parallel mode DOES log slow feature-group queries for diagnostics, but we don't chart "≥1 slow"
 #   because it's not the right mental model (engineers should focus on critical-path entity instead)
 slow_query_query = f"""
-    SELECT 
-        mode,
-        hot_traffic_pct,
-        COUNT(DISTINCT request_id) as total_requests,
-        COUNT(DISTINCT CASE WHEN query_latency_ms > 100 THEN request_id END) as requests_with_slow_query,
-        (COUNT(DISTINCT CASE WHEN query_latency_ms > 100 THEN request_id END)::FLOAT / 
-         NULLIF(COUNT(DISTINCT request_id)::FLOAT, 0) * 100) as tail_amplification_pct
-    FROM features.zipfian_slow_query_log
-    WHERE run_id = '{RUN_ID}'
-      AND mode = 'serial'  -- ✅ Intentionally Serial-only
-    GROUP BY mode, hot_traffic_pct
-    HAVING COUNT(DISTINCT request_id) > 0
-    ORDER BY mode, hot_traffic_pct DESC
+    WITH base AS (
+      SELECT mode, hot_traffic_pct, request_id
+      FROM features.zipfian_request_timing
+      WHERE run_id = '{RUN_ID}'
+        AND mode = 'serial'
+    ),
+    slow AS (
+      SELECT mode, hot_traffic_pct, request_id
+      FROM features.zipfian_slow_query_log
+      WHERE run_id = '{RUN_ID}'
+        AND mode = 'serial'
+        AND query_latency_ms > 100
+    )
+    SELECT
+      b.mode,
+      b.hot_traffic_pct,
+      COUNT(*) AS total_requests,
+      COUNT(DISTINCT s.request_id) AS requests_with_slow_query,
+      100.0 * COUNT(DISTINCT s.request_id) / NULLIF(COUNT(*), 0) AS tail_amplification_pct
+    FROM base b
+    LEFT JOIN slow s
+      ON s.mode = b.mode
+     AND s.hot_traffic_pct = b.hot_traffic_pct
+     AND s.request_id = b.request_id
+    GROUP BY b.mode, b.hot_traffic_pct
+    ORDER BY b.mode, b.hot_traffic_pct DESC
 """
 
 try:
