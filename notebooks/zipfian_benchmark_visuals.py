@@ -2063,23 +2063,22 @@ except Exception as e:
 print("📊 Chart 6: Tail Amplification Probability (Serial-only)...")
 
 # Query slow query log to calculate P(request has ≥1 slow query)
-# ✅ DESIGN DECISION: This chart is Serial-only by design
+# ✅ UPDATED: Now shows serial, binpacked, and binpacked_parallel for comparison
 # - In serial mode, "≥1 slow query" directly causes tail because latency = Σ(queries)
-# - In parallel mode, the critical path (max entity) dominates, not individual slow queries
-# - Parallel mode DOES log slow feature-group queries for diagnostics, but we don't chart "≥1 slow"
-#   because it's not the right mental model (engineers should focus on critical-path entity instead)
+# - In binpacked mode, shows impact of query consolidation on tail risk
+# - In parallel mode, shows critical path entity dominance vs individual slow queries
 slow_query_query = f"""
     WITH base AS (
       SELECT mode, hot_traffic_pct, request_id
       FROM features.zipfian_request_timing
       WHERE run_id = '{RUN_ID}'
-        AND mode = 'serial'
+        AND mode IN ('serial', 'binpacked', 'binpacked_parallel')
     ),
     slow AS (
       SELECT mode, hot_traffic_pct, request_id
       FROM features.zipfian_slow_query_log
       WHERE run_id = '{RUN_ID}'
-        AND mode = 'serial'
+        AND mode IN ('serial', 'binpacked', 'binpacked_parallel')
         AND query_latency_ms >= 40
     )
     SELECT
