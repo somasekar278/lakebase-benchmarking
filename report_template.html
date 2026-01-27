@@ -2485,307 +2485,276 @@ RPC:      L_req ≈ L_server_fn    (server-side composition)</code></pre>
 
     </div>
 
-    <!-- Tab: Parallelism (NEW - focused single story) -->
+    <!-- Tab: Execution Strategies (REDESIGNED - Tight & Visual) -->
     <div id="tab-exec-strategies" class="tab-content">
       
+      <style>
+        /* Tab-local chart frame styling for consistent sizing */
+        #tab-exec-strategies .chart-container {
+          height: 320px;
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: var(--surface-2);
+          border-radius: 8px;
+          margin-bottom: 16px;
+        }
+        
+        #tab-exec-strategies .chart-container img {
+          max-height: 100%;
+          max-width: 100%;
+          object-fit: contain;
+        }
+        
+        #tab-exec-strategies .kpi-chips {
+          display: flex;
+          gap: 12px;
+          margin-top: 12px;
+          flex-wrap: wrap;
+        }
+        
+        #tab-exec-strategies .kpi-chip {
+          padding: 8px 16px;
+          background: var(--surface-2);
+          border-radius: 20px;
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--text);
+          border: 1px solid var(--border);
+        }
+        
+        #tab-exec-strategies .callout-pill {
+          display: inline-block;
+          padding: 10px 20px;
+          background: linear-gradient(135deg, rgba(124,58,237,.15), rgba(0,212,255,.1));
+          border-radius: 24px;
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--brand-2);
+          border: 2px solid var(--brand-2);
+          margin-top: 12px;
+        }
+        
+        #tab-exec-strategies .strategy-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 13px;
+          margin-top: 16px;
+        }
+        
+        #tab-exec-strategies .strategy-table th {
+          text-align: left;
+          padding: 12px;
+          background: var(--surface-2);
+          color: var(--text);
+          font-weight: 700;
+          border-bottom: 2px solid var(--border);
+        }
+        
+        #tab-exec-strategies .strategy-table td {
+          padding: 12px;
+          border-bottom: 1px solid var(--border);
+          color: var(--muted);
+        }
+        
+        #tab-exec-strategies .strategy-table tr:last-child td {
+          border-bottom: none;
+        }
+        
+        #tab-exec-strategies .strategy-table .highlight-row {
+          background: rgba(124,58,237,.05);
+        }
+      </style>
+
       <!-- Title Card -->
-      <div class="card" style="margin-bottom: 32px;">
+      <div class="card" style="margin-bottom: 24px;">
         <p class="eyebrow">Execution Strategies</p>
-        <h2 class="section-title">From Fan-out to RPC: Four Approaches</h2>
+        <h2 class="section-title">How to Tackle Fan-out: Four Approaches</h2>
         <p class="section-subtitle">
-          How each mode tackles request-level tail latency: reducing queries (binpacking), overlapping execution (parallel), eliminating client round-trips (RPC), and baseline (serial).
+          Different strategies optimize different parts of the critical path. Charts show the measured impact.
         </p>
       </div>
 
-      <!-- 2-Column Layout: Strategy Cards (LEFT) + Impact Summary (RIGHT) -->
-      <div class="content-grid two-col" style="margin-bottom: 32px;">
-        
-        <!-- LEFT COLUMN: Strategy Cards -->
-        <div style="display: flex; flex-direction: column; gap: 16px;">
-          
-          <!-- Strategy 1: Serial (Baseline) -->
-          <div class="content-card" style="padding: 20px; background: var(--surface); border-left: 3px solid var(--muted-2);">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-              <div style="width: 8px; height: 8px; border-radius: 50%; background: #94A3B8;"></div>
-              <h4 style="font-size: 15px; font-weight: 700; color: var(--text); margin: 0;">Serial (Baseline)</h4>
-            </div>
-            <div style="font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 12px;">
-              Execute all 30 lookups sequentially. Request latency = sum of entity times.
-            </div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; color: var(--muted);">
-              <span style="color: var(--text); font-weight: 600;">Reduces:</span>
-              <span>Nothing (baseline)</span>
-              <span style="color: var(--text); font-weight: 600;">Trade-off:</span>
-              <span>Slowest mode; full RTT cost per lookup</span>
-            </div>
-          </div>
-
-          <!-- Strategy 2: Bin-packed -->
-          <div class="content-card" style="padding: 20px; background: var(--surface); border-left: 3px solid #60A5FA;">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-              <div style="width: 8px; height: 8px; border-radius: 50%; background: #60A5FA;"></div>
-              <h4 style="font-size: 15px; font-weight: 700; color: var(--text); margin: 0;">Bin-packed</h4>
-            </div>
-            <div style="font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 12px;">
-              Group tables by feature family (UNION ALL). Reduces 30 queries to ~10. Still sequential.
-            </div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; color: var(--muted);">
-              <span style="color: var(--text); font-weight: 600;">Reduces:</span>
-              <span>Round-trip count (30 → 10)</span>
-              <span style="color: var(--text); font-weight: 600;">Trade-off:</span>
-              <span>Still sequential; sum of entity times</span>
-            </div>
-          </div>
-
-          <!-- Strategy 3: Parallel -->
-          <div class="content-card" style="padding: 20px; background: var(--surface); border-left: 3px solid var(--brand-1);">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-              <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--brand-1);"></div>
-              <h4 style="font-size: 15px; font-weight: 700; color: var(--text); margin: 0;">Parallel (Workers)</h4>
-            </div>
-            <div style="font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 12px;">
-              Fetch 3 entities concurrently using worker threads. Request latency = max(entity wall-clock) where wall-clock = pool wait + DB exec.
-            </div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; color: var(--muted);">
-              <span style="color: var(--text); font-weight: 600;">Reduces:</span>
-              <span>Critical path (slowest entity dominates)</span>
-              <span style="color: var(--text); font-weight: 600;">Trade-off:</span>
-              <span>Pool contention under low worker counts; connection overhead</span>
-            </div>
-          </div>
-
-          <!-- Strategy 4: RPC -->
-          <div class="content-card" style="padding: 20px; background: linear-gradient(135deg, rgba(0,212,255,.1), rgba(124,58,237,.08)); border-left: 3px solid var(--brand-2);">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-              <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--brand-2);"></div>
-              <h4 style="font-size: 15px; font-weight: 700; color: var(--brand-2); margin: 0;">RPC (Server-side Function)</h4>
-            </div>
-            <div style="font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 12px;">
-              Execute entire request fan-out server-side. Client makes one function call; server aggregates results. Query count: 30 → 1.
-            </div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; color: var(--muted);">
-              <span style="color: var(--text); font-weight: 600;">Reduces:</span>
-              <span>Client round-trips (eliminates network variance)</span>
-              <span style="color: var(--text); font-weight: 600;">Trade-off:</span>
-              <span>Changes query shape; requires schema function</span>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- RIGHT COLUMN: Impact Summary + Measurement Note -->
-        <div style="display: flex; flex-direction: column; gap: 16px;">
-          
-          <!-- Quick Comparison Table -->
-          <div class="content-card" style="padding: 20px;">
-            <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px; color: var(--text);">At a Glance</h3>
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-              <thead>
-                <tr style="border-bottom: 2px solid var(--border);">
-                  <th style="text-align: left; padding: 10px; color: var(--text); font-weight: 700;">Mode</th>
-                  <th style="text-align: center; padding: 10px; color: var(--text); font-weight: 700;">Queries</th>
-                  <th style="text-align: center; padding: 10px; color: var(--text); font-weight: 700;">Latency</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 10px; color: var(--muted);">Serial</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted);">30</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted); font-family: monospace;">Σ(entity)</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 10px; color: var(--muted);">Binpacked</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted);">~10</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted); font-family: monospace;">Σ(entity)</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 10px; color: var(--text); font-weight: 600;">Parallel</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted);">~10</td>
-                  <td style="padding: 10px; text-align: center; color: var(--text); font-family: monospace; font-weight: 600;">max(entity)</td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px; color: var(--brand-2); font-weight: 700;">RPC</td>
-                  <td style="padding: 10px; text-align: center; color: var(--brand-2); font-weight: 700;">1</td>
-                  <td style="padding: 10px; text-align: center; color: var(--brand-2); font-family: monospace; font-weight: 600;">L<sub>fn</sub></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Measurement Note -->
-          <div class="content-card" style="padding: 20px; background: rgba(251, 191, 36, 0.08); border-left: 3px solid var(--warning);">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-              <span style="font-size: 18px;">⚠️</span>
-              <h4 style="font-size: 14px; font-weight: 700; color: var(--warning); margin: 0;">Measurement Note: "Honest Latency"</h4>
-            </div>
-            <div style="font-size: 13px; color: var(--muted); line-height: 1.7;">
-              <div style="margin-bottom: 8px;">
-                <b style="color: var(--text);">Serial / Binpacked:</b> Request latency = sum of entity execution times (DB-only).
-              </div>
-              <div style="margin-bottom: 8px;">
-                <b style="color: var(--text);">Parallel:</b> Request latency = max(pool wait + DB exec per entity). Under low worker counts, pool wait can dominate.
-              </div>
-              <div>
-                <b style="color: var(--text);">RPC:</b> Request latency = single server function call (includes server-side execution + JSON serialization).
-              </div>
-            </div>
-          </div>
-
-          <!-- Key Insight -->
-          <div class="content-card" style="padding: 20px; background: linear-gradient(135deg, rgba(124,58,237,.15), rgba(0,212,255,.1)); border-left: 3px solid var(--brand-2);">
-            <h4 style="font-size: 14px; font-weight: 700; color: var(--brand-2); margin-bottom: 12px;">Why RPC Wins at Scale</h4>
-            <div style="font-size: 13px; color: var(--muted); line-height: 1.7;">
-              Parallel mode <b>reduces</b> the client-side critical path. RPC mode <b>eliminates</b> it entirely — no client workers, no connection pool contention, no round-trip variance. The database executes the entire fan-out internally and returns an aggregated result.
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      <!-- 2x2 Grid -->
+      <!-- A) Top Row: Two Chart Cards -->
       <div class="content-grid two-col" style="margin-bottom: 24px;">
         
-        <!-- Top-left: Overlap Visualization (Gantt) with Toggle -->
+        <!-- Card 1: Fan-out Reduction -->
         <div class="content-card">
-          <div class="chart-frame" style="min-height: 500px;">
-            <div class="chart-title">Request timeline: serial vs parallel execution</div>
-            
-            <!-- Toggle UI -->
-            <div style="display: flex; justify-content: center; margin: 16px 0; gap: 0;">
-              <button id="gantt-toggle-db" 
-                      onclick="switchGanttView('db')" 
-                      style="padding: 8px 20px; border: 1px solid var(--border); background: var(--brand-1); color: white; font-weight: 600; font-size: 13px; cursor: pointer; border-radius: 6px 0 0 6px; transition: all 0.2s;">
-                DB execution
-              </button>
-              <button id="gantt-toggle-wallclock" 
-                      onclick="switchGanttView('wallclock')" 
-                      style="padding: 8px 20px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; border-radius: 0 6px 6px 0; transition: all 0.2s;">
-                Wall-clock
-              </button>
-            </div>
-
-            <!-- Gantt Canvas -->
-            <canvas id="gantt-chart" style="width: 100%; height: 400px;"></canvas>
-            
-            <!-- Legend (shown only in wall-clock mode) -->
-            <div id="gantt-legend" style="display: none; margin-top: 12px; padding: 12px; background: var(--surface-2); border-radius: 6px; font-size: 13px;">
-              <div style="display: flex; gap: 20px; justify-content: center; align-items: center;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <div style="width: 20px; height: 12px; background: rgba(251, 191, 36, 0.4); border: 1px dashed #F59E0B;"></div>
-                  <span style="color: var(--muted);">Pool wait</span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <div style="width: 20px; height: 12px; background: var(--brand-1); border: 1px solid var(--brand-2);"></div>
-                  <span style="color: var(--muted);">DB execution</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Note for missing wall-clock data -->
-            <div id="gantt-no-wallclock" style="display: none; margin-top: 12px; padding: 12px; background: var(--surface-2); border-left: 3px solid var(--warning); border-radius: 6px; font-size: 13px; color: var(--muted);">
-              Wall-clock segments not available for this run (requires V5.4+ benchmark data).
-            </div>
-
-            <div class="chart-caption" style="margin-top: 16px;">
-              <b>DB-only view:</b> Shows execution overlap and parallelism. Parallel mode fetches entities concurrently, reducing critical path.<br/>
-              <b>Wall-clock view:</b> Includes pool acquisition time (connection wait before DB execution). Under low worker counts, pool contention can dominate latency.<br/>
-              <b>Note:</b> RPC mode collapses the entire request into one server-side function call; no client-side parallelism.
-            </div>
+          <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px; color: var(--text);">Fan-out reduction (queries per request)</h3>
+          
+          <!-- Chart -->
+          <div class="chart-container">
+            <img src="data:image/png;base64,{{CHART_EXEC_QUERIES_PER_REQUEST_BASE64}}" alt="Queries per request" />
+          </div>
+          
+          <!-- Takeaway Bullets -->
+          <ul style="list-style: none; padding: 0; margin: 0 0 12px 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+            <li style="padding-left: 20px; position: relative;">
+              <span style="position: absolute; left: 0; color: var(--brand-1);">•</span>
+              Bin-packing reduces request fan-out (N)
+            </li>
+            <li style="padding-left: 20px; position: relative;">
+              <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+              RPC collapses fan-out to a single round-trip
+            </li>
+          </ul>
+          
+          <!-- KPI Chips -->
+          <div class="kpi-chips">
+            <span class="kpi-chip">Serial = 30</span>
+            <span class="kpi-chip">Bin-packed = 10</span>
+            <span class="kpi-chip">RPC×Entity = 3</span>
+            <span class="kpi-chip">RPC = 1</span>
           </div>
         </div>
 
-        <!-- Top-right: Workers Sweep (Diminishing Returns) -->
+        <!-- Card 2: Critical Path -->
         <div class="content-card">
-          <div class="chart-frame" style="min-height: 500px;">
-            <div class="chart-title">Workers sweep: diminishing returns after 2-3 workers</div>
-            <img src="data:image/png;base64,{{CHART_CONCURRENCY_BASE64}}" alt="Workers sweep" class="chart-embed" style="min-height: 420px; width: 100%; object-fit: contain;" />
-            <div class="chart-caption">
-              <b>How to read:</b> P99 improves with more workers, but the curve flattens.
-              Most gains achieved by 2–3 workers; beyond that, overhead dominates.
-            </div>
+          <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px; color: var(--text);">Critical path: what determines request P99</h3>
+          
+          <!-- Chart -->
+          <div class="chart-container">
+            <img src="data:image/png;base64,{{CHART_EXEC_P99_COLD_POINTS_BASE64}}" alt="P99 at 0% hot" />
           </div>
-        </div>
-
-        <!-- Bottom-left: Math Callout (Purple Style) -->
-        <div class="content-card">
-          <div style="padding: 24px;">
-            <!-- Purple math callout matching Tab 2 style -->
-            <div style="background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%); 
-                        border-radius: 12px; padding: 24px; color: white; margin-bottom: 20px;">
-              <div style="font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #FCD34D; margin-bottom: 16px;">
-                EXECUTION MODE COST MODELS
-              </div>
-              <div style="background: rgba(255,255,255,0.15); border-radius: 8px; padding: 16px; margin-bottom: 16px; font-family: 'SF Mono', 'Courier New', monospace; font-size: 14px; line-height: 1.8;">
-                <div>Serial: L<sub>req</sub> ≈ Σ L<sub>lookup</sub></div>
-                <div>Parallel: L<sub>req</sub> ≈ max(L<sub>entity</sub>) + overhead</div>
-                <div style="color: var(--brand-3);">RPC: L<sub>req</sub> ≈ L<sub>server_fn</sub></div>
-              </div>
-            </div>
-
-            <!-- 3 Bullets -->
-            <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
-              <li style="padding-left: 24px; position: relative;">
-                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
-                Parallelism overlaps independent entity fan-out
-              </li>
-              <li style="padding-left: 24px; position: relative;">
-                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
-                Tail becomes "critical path" dominated
-              </li>
-              <li style="padding-left: 24px; position: relative;">
-                <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
-                Overhead: scheduling + connection + contention
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <!-- Bottom-right: What Limits Scaling -->
-        <div class="content-card">
-          <div style="padding: 24px;">
-            <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 20px; color: var(--text);">
-              What limits scaling
-            </h3>
-            
-            <ul style="list-style: none; padding: 0; margin: 0 0 24px 0; font-size: 15px; line-height: 2; color: var(--muted);">
-              <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
-                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
-                <strong style="color: var(--text);">DB contention / connection saturation</strong><br/>
-                <span style="font-size: 13px;">As workers increase, shared buffer locks and connection pool pressure grow.</span>
-              </li>
-              <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
-                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
-                <strong style="color: var(--text);">Locking / shared buffer pressure</strong><br/>
-                <span style="font-size: 13px;">Parallel queries compete for the same cache lines and row locks.</span>
-              </li>
-              <li style="padding-left: 24px; position: relative;">
-                <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>
-                <strong style="color: var(--text);">Per-request overhead (client + server)</strong><br/>
-                <span style="font-size: 13px;">Thread creation, context switching, and query planning costs don't parallelize.</span>
-              </li>
-            </ul>
-
-            <div style="background: var(--surface-2); border-left: 3px solid var(--warning); padding: 16px; border-radius: 6px;">
-              <div style="font-size: 13px; font-weight: 700; color: var(--warning); margin-bottom: 8px;">
-                Measured indicator
-              </div>
-              <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
-                Beyond 3 workers, P99 improvement drops below 10% per additional worker — 
-                contention overhead begins to dominate parallelism gains.
-              </div>
-            </div>
+          
+          <!-- Takeaway Bullets -->
+          <ul style="list-style: none; padding: 0; margin: 0 0 12px 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+            <li style="padding-left: 20px; position: relative;">
+              <span style="position: absolute; left: 0; color: var(--brand-1);">•</span>
+              Serial: sum of lookups → tail compounds
+            </li>
+            <li style="padding-left: 20px; position: relative;">
+              <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+              Parallel: max(entity) → bounded by slowest path
+            </li>
+          </ul>
+          
+          <!-- Callout Pill -->
+          <div style="text-align: center;">
+            <span class="callout-pill">P99 ≈ max(entity wall-clock)</span>
           </div>
         </div>
 
       </div>
 
-      <!-- Bottom Takeaway -->
-      <div class="takeaway-banner">
-        <div class="takeaway-title">Key takeaway</div>
-        <div class="takeaway-body">
-          <b>Parallel</b> reduces the client-side critical path by overlapping entity fetches — but it's bounded by the slowest entity and worker contention.
-          <b>RPC eliminates the client-side critical path entirely</b> by moving execution server-side (no client workers, no round-trip variance).
+      <!-- B) Middle Row: Strategy Decision Table -->
+      <div class="content-card" style="margin-bottom: 24px;">
+        <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 8px; color: var(--text);">Strategy decision table</h3>
+        <p style="font-size: 14px; color: var(--muted); margin-bottom: 16px;">
+          Different strategies optimize different parts of the critical path.
+        </p>
+        
+        <table class="strategy-table">
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Dominant Cost</th>
+              <th>Best When</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>Serial / Bin-packed</b></td>
+              <td>Sum of round-trips</td>
+              <td>Low fan-out; simple setup</td>
+            </tr>
+            <tr>
+              <td><b>RPC (1 SP)</b></td>
+              <td>Sum of server-side cold I/O</td>
+              <td>Mostly-hot workloads (80%+ hot)</td>
+            </tr>
+            <tr>
+              <td><b>Parallel (client-side)</b></td>
+              <td>RTT + pool contention</td>
+              <td>Cold I/O dominates</td>
+            </tr>
+            <tr class="highlight-row">
+              <td><b style="color: var(--brand-2);">RPC × 3 (parallel SPs)</b></td>
+              <td><b>max(server cold I/O)</b></td>
+              <td><b>Likely optimal at 0–10% hot</b></td>
+            </tr>
+          </tbody>
+        </table>
+        
+        <p style="font-size: 13px; color: var(--muted); margin-top: 16px; font-style: italic;">
+          For cold-heavy mixes, parallelizing server-side work is the next lever.
+        </p>
+      </div>
+
+      <!-- C) Bottom Row: Two Cards -->
+      <div class="content-grid two-col" style="margin-bottom: 24px;">
+        
+        <!-- Card 4: Gantt -->
+        <div class="content-card">
+          <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 12px; color: var(--text);">Overlap view (Gantt)</h3>
+          
+          <!-- Toggle UI -->
+          <div style="display: flex; justify-content: center; margin-bottom: 16px; gap: 0;">
+            <button id="gantt-toggle-db" 
+                    onclick="switchGanttView('db')" 
+                    style="padding: 8px 20px; border: 1px solid var(--border); background: var(--brand-1); color: white; font-weight: 600; font-size: 13px; cursor: pointer; border-radius: 6px 0 0 6px; transition: all 0.2s;">
+              DB-only
+            </button>
+            <button id="gantt-toggle-wallclock" 
+                    onclick="switchGanttView('wallclock')" 
+                    style="padding: 8px 20px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; border-radius: 0 6px 6px 0; transition: all 0.2s;">
+              Wall-clock
+            </button>
+          </div>
+
+          <!-- Gantt Canvas -->
+          <canvas id="gantt-chart" style="width: 100%; height: 280px; background: var(--surface-2); border-radius: 8px;"></canvas>
+          
+          <!-- Legend (shown only in wall-clock mode) -->
+          <div id="gantt-legend" style="display: none; margin-top: 12px; padding: 12px; background: var(--surface-2); border-radius: 6px; font-size: 12px;">
+            <div style="display: flex; gap: 20px; justify-content: center; align-items: center;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <div style="width: 20px; height: 12px; background: rgba(251, 191, 36, 0.4); border: 1px dashed #F59E0B;"></div>
+                <span style="color: var(--muted);">Pool wait</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <div style="width: 20px; height: 12px; background: var(--brand-1); border: 1px solid var(--brand-2);"></div>
+                <span style="color: var(--muted);">DB execution</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Note for missing wall-clock data -->
+          <div id="gantt-no-wallclock" style="display: none; margin-top: 12px; padding: 12px; background: var(--surface-2); border-left: 3px solid var(--warning); border-radius: 6px; font-size: 12px; color: var(--muted);">
+            Wall-clock segments not available for this run.
+          </div>
+          
+          <!-- Caption -->
+          <p style="font-size: 13px; color: var(--muted); margin-top: 12px; line-height: 1.6;">
+            Parallel reduces sum into max; contention shows up as wait time.
+          </p>
         </div>
+
+        <!-- Card 5: Key Takeaways -->
+        <div class="content-card">
+          <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px; color: var(--text);">What to take away</h3>
+          
+          <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 2; color: var(--muted);">
+            <li style="padding-left: 20px; position: relative; margin-bottom: 12px;">
+              <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+              Fan-out dominates tail latency
+            </li>
+            <li style="padding-left: 20px; position: relative; margin-bottom: 12px;">
+              <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+              Reducing N helps more than micro-optimizing single queries
+            </li>
+            <li style="padding-left: 20px; position: relative; margin-bottom: 12px;">
+              <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+              Parallelism helps until contention becomes the limiter
+            </li>
+            <li style="padding-left: 20px; position: relative;">
+              <span style="position: absolute; left: 0; color: var(--brand-2); font-weight: 700;">•</span>
+              RPC reduces round-trips; consider 3× RPC for cold-heavy mixes
+            </li>
+          </ul>
+        </div>
+
       </div>
 
     </div>
