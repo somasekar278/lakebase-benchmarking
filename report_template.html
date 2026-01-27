@@ -2408,149 +2408,71 @@
         </p>
       </div>
 
-      <!-- 2-Column Layout: Strategy Cards (LEFT) + Impact Summary (RIGHT) -->
-      <div class="content-grid two-col" style="margin-bottom: 32px;">
-        
-        <!-- LEFT COLUMN: Strategy Cards -->
-        <div style="display: flex; flex-direction: column; gap: 16px;">
-          
-          <!-- Strategy 1: Serial (Baseline) -->
-          <div class="content-card" style="padding: 20px; background: var(--surface); border-left: 3px solid var(--muted-2);">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-              <div style="width: 8px; height: 8px; border-radius: 50%; background: #94A3B8;"></div>
-              <h4 style="font-size: 15px; font-weight: 700; color: var(--text); margin: 0;">Serial (Baseline)</h4>
-            </div>
-            <div style="font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 12px;">
-              Execute all 30 lookups sequentially. Request latency = sum of entity times.
-            </div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; color: var(--muted);">
-              <span style="color: var(--text); font-weight: 600;">Reduces:</span>
-              <span>Nothing (baseline)</span>
-              <span style="color: var(--text); font-weight: 600;">Trade-off:</span>
-              <span>Slowest mode; full RTT cost per lookup</span>
-            </div>
-          </div>
+      <!-- Comparison Table -->
+      <div class="content-card" style="max-width: 1200px; margin: 0 auto 32px auto; padding: 24px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <thead>
+            <tr style="border-bottom: 2px solid var(--border);">
+              <th style="text-align: left; padding: 12px; color: var(--text); font-weight: 700;">Mode</th>
+              <th style="text-align: center; padding: 12px; color: var(--text); font-weight: 700;">Queries / Request</th>
+              <th style="text-align: center; padding: 12px; color: var(--text); font-weight: 700;">Critical Path</th>
+              <th style="text-align: left; padding: 12px; color: var(--text); font-weight: 700;">Dominant P99 Cost</th>
+              <th style="text-align: left; padding: 12px; color: var(--text); font-weight: 700;">Best Used When</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 12px; color: var(--muted);">Serial</td>
+              <td style="padding: 12px; text-align: center; color: var(--muted); font-family: monospace;">30</td>
+              <td style="padding: 12px; text-align: center; color: var(--muted); font-family: monospace;">Σ(entity)</td>
+              <td style="padding: 12px; color: var(--muted);">Fan-out tail amplification</td>
+              <td style="padding: 12px; color: var(--muted);">Never (baseline)</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 12px; color: var(--muted);">Bin-packed</td>
+              <td style="padding: 12px; text-align: center; color: var(--muted); font-family: monospace;">~10</td>
+              <td style="padding: 12px; text-align: center; color: var(--muted); font-family: monospace;">Σ(entity)</td>
+              <td style="padding: 12px; color: var(--muted);">Fan-out tail amplification</td>
+              <td style="padding: 12px; color: var(--muted);">Minor RTT savings only</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 12px; color: var(--muted);">Parallel (client-side)</td>
+              <td style="padding: 12px; text-align: center; color: var(--muted); font-family: monospace;">~10</td>
+              <td style="padding: 12px; text-align: center; color: var(--muted); font-family: monospace;">max(entity)</td>
+              <td style="padding: 12px; color: var(--muted);">RTT + pool contention</td>
+              <td style="padding: 12px; color: var(--muted);">Cold I/O dominates</td>
+            </tr>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <td style="padding: 12px; color: var(--muted);">RPC (single SP)</td>
+              <td style="padding: 12px; text-align: center; color: var(--muted); font-family: monospace;">1</td>
+              <td style="padding: 12px; text-align: center; color: var(--muted); font-family: monospace;">L<sub>fn</sub></td>
+              <td style="padding: 12px; color: var(--muted);">Server-side cold I/O sum</td>
+              <td style="padding: 12px; color: var(--muted);">Mostly-hot workloads</td>
+            </tr>
+            <tr style="background: rgba(0, 212, 255, 0.05);">
+              <td style="padding: 12px; color: var(--text); font-weight: 600;">RPC × Entity (parallel SPs)</td>
+              <td style="padding: 12px; text-align: center; color: var(--text); font-family: monospace; font-weight: 600;">3</td>
+              <td style="padding: 12px; text-align: center; color: var(--text); font-family: monospace; font-weight: 600;">max(server I/O)</td>
+              <td style="padding: 12px; color: var(--text); font-weight: 600;">Slowest entity</td>
+              <td style="padding: 12px; color: var(--text); font-weight: 600;">Optimal at 0–10% hot</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
-          <!-- Strategy 2: Bin-packed -->
-          <div class="content-card" style="padding: 20px; background: var(--surface); border-left: 3px solid #60A5FA;">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-              <div style="width: 8px; height: 8px; border-radius: 50%; background: #60A5FA;"></div>
-              <h4 style="font-size: 15px; font-weight: 700; color: var(--text); margin: 0;">Bin-packed</h4>
-            </div>
-            <div style="font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 12px;">
-              Group tables by feature family (UNION ALL). Reduces 30 queries to ~10. Still sequential.
-            </div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; color: var(--muted);">
-              <span style="color: var(--text); font-weight: 600;">Reduces:</span>
-              <span>Round-trip count (30 → 10)</span>
-              <span style="color: var(--text); font-weight: 600;">Trade-off:</span>
-              <span>Still sequential; sum of entity times</span>
-            </div>
-          </div>
+      <!-- Measurement Note -->
+      <div style="max-width: 1200px; margin: 0 auto 20px auto; padding: 0 24px;">
+        <p style="font-size: 13px; color: var(--muted); line-height: 1.6; margin: 0;">
+          <b style="color: var(--text);">Latency definition:</b> Serial/Bin-packed report DB execution time. Parallel reports wall-clock (pool wait + DB execution). RPC reports end-to-end server-side function time.
+        </p>
+      </div>
 
-          <!-- Strategy 3: Parallel -->
-          <div class="content-card" style="padding: 20px; background: var(--surface); border-left: 3px solid var(--brand-1);">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-              <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--brand-1);"></div>
-              <h4 style="font-size: 15px; font-weight: 700; color: var(--text); margin: 0;">Parallel (Workers)</h4>
-            </div>
-            <div style="font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 12px;">
-              Fetch 3 entities concurrently using worker threads. Request latency = max(entity wall-clock) where wall-clock = pool wait + DB exec.
-            </div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; color: var(--muted);">
-              <span style="color: var(--text); font-weight: 600;">Reduces:</span>
-              <span>Critical path (slowest entity dominates)</span>
-              <span style="color: var(--text); font-weight: 600;">Trade-off:</span>
-              <span>Pool contention under low worker counts; connection overhead</span>
-            </div>
-          </div>
-
-          <!-- Strategy 4: RPC -->
-          <div class="content-card" style="padding: 20px; background: linear-gradient(135deg, rgba(0,212,255,.1), rgba(124,58,237,.08)); border-left: 3px solid var(--brand-2);">
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-              <div style="width: 8px; height: 8px; border-radius: 50%; background: var(--brand-2);"></div>
-              <h4 style="font-size: 15px; font-weight: 700; color: var(--brand-2); margin: 0;">RPC (Server-side Function)</h4>
-            </div>
-            <div style="font-size: 14px; color: var(--muted); line-height: 1.7; margin-bottom: 12px;">
-              Execute entire request fan-out server-side. Client makes one function call; server aggregates results. Query count: 30 → 1.
-            </div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; color: var(--muted);">
-              <span style="color: var(--text); font-weight: 600;">Reduces:</span>
-              <span>Client round-trips (eliminates network variance)</span>
-              <span style="color: var(--text); font-weight: 600;">Trade-off:</span>
-              <span>Changes query shape; requires schema function</span>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- RIGHT COLUMN: Impact Summary + Measurement Note -->
-        <div style="display: flex; flex-direction: column; gap: 16px;">
-          
-          <!-- Quick Comparison Table -->
-          <div class="content-card" style="padding: 20px;">
-            <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 16px; color: var(--text);">At a Glance</h3>
-            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-              <thead>
-                <tr style="border-bottom: 2px solid var(--border);">
-                  <th style="text-align: left; padding: 10px; color: var(--text); font-weight: 700;">Mode</th>
-                  <th style="text-align: center; padding: 10px; color: var(--text); font-weight: 700;">Queries</th>
-                  <th style="text-align: center; padding: 10px; color: var(--text); font-weight: 700;">Latency</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 10px; color: var(--muted);">Serial</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted);">30</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted); font-family: monospace;">Σ(entity)</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 10px; color: var(--muted);">Binpacked</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted);">~10</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted); font-family: monospace;">Σ(entity)</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 10px; color: var(--text); font-weight: 600;">Parallel</td>
-                  <td style="padding: 10px; text-align: center; color: var(--muted);">~10</td>
-                  <td style="padding: 10px; text-align: center; color: var(--text); font-family: monospace; font-weight: 600;">max(entity)</td>
-                </tr>
-                <tr>
-                  <td style="padding: 10px; color: var(--brand-2); font-weight: 700;">RPC</td>
-                  <td style="padding: 10px; text-align: center; color: var(--brand-2); font-weight: 700;">1</td>
-                  <td style="padding: 10px; text-align: center; color: var(--brand-2); font-family: monospace; font-weight: 600;">L<sub>fn</sub></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Measurement Note -->
-          <div class="content-card" style="padding: 20px; background: rgba(251, 191, 36, 0.08); border-left: 3px solid var(--warning);">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-              <span style="font-size: 18px;">⚠️</span>
-              <h4 style="font-size: 14px; font-weight: 700; color: var(--warning); margin: 0;">Measurement Note: "Honest Latency"</h4>
-            </div>
-            <div style="font-size: 13px; color: var(--muted); line-height: 1.7;">
-              <div style="margin-bottom: 8px;">
-                <b style="color: var(--text);">Serial / Binpacked:</b> Request latency = sum of entity execution times (DB-only).
-              </div>
-              <div style="margin-bottom: 8px;">
-                <b style="color: var(--text);">Parallel:</b> Request latency = max(pool wait + DB exec per entity). Under low worker counts, pool wait can dominate.
-              </div>
-              <div>
-                <b style="color: var(--text);">RPC:</b> Request latency = single server function call (includes server-side execution + JSON serialization).
-              </div>
-            </div>
-          </div>
-
-          <!-- Key Insight -->
-          <div class="content-card" style="padding: 20px; background: linear-gradient(135deg, rgba(124,58,237,.15), rgba(0,212,255,.1)); border-left: 3px solid var(--brand-2);">
-            <h4 style="font-size: 14px; font-weight: 700; color: var(--brand-2); margin-bottom: 12px;">Why RPC Wins at Scale</h4>
-            <div style="font-size: 13px; color: var(--muted); line-height: 1.7;">
-              Parallel mode <b>reduces</b> the client-side critical path. RPC mode <b>eliminates</b> it entirely — no client workers, no connection pool contention, no round-trip variance. The database executes the entire fan-out internally and returns an aggregated result.
-            </div>
-          </div>
-
-        </div>
+      <!-- Why RPC Helps -->
+      <div class="content-card" style="max-width: 1200px; margin: 0 auto 32px auto; padding: 16px 20px; border-left: 3px solid var(--brand-2);">
+        <h4 style="font-size: 14px; font-weight: 700; color: var(--brand-2); margin: 0 0 8px 0;">Why RPC helps</h4>
+        <p style="font-size: 13px; color: var(--muted); line-height: 1.6; margin: 0;">
+          Collapses ~30 client round-trips into server-side execution, removing RTT variance from the critical path.
+        </p>
       </div>
 
       <!-- 2x2 Grid -->
