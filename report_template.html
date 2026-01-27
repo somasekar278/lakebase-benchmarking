@@ -3528,9 +3528,171 @@ gantt_data.append({
         </ul>
       </div>
 
-      <!-- G. Known Limitations -->
+      <!-- G. PostgreSQL-Level Controls, Assumptions, and Limitations -->
+      <div class="content-card" style="border-left: 4px solid var(--brand-2); background: var(--surface);">
+        <h3 class="card-title" style="color: var(--brand-2);">G. PostgreSQL-level controls, assumptions, and limitations</h3>
+        <p style="font-size: 14px; color: var(--muted); line-height: 1.6; margin-bottom: 24px;">
+          This section makes benchmark assumptions explicit, defensible, and complete for PostgreSQL / Lakebase engineers reviewing methodology.
+        </p>
+
+        <!-- G1. Transaction & Session Semantics -->
+        <div style="margin-bottom: 32px;">
+          <h4 style="font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 12px;">1. Transaction & session semantics</h4>
+          
+          <div style="background: var(--surface-2); padding: 16px; border-radius: 6px; margin-bottom: 16px;">
+            <div style="font-size: 13px; font-weight: 700; color: var(--brand-2); margin-bottom: 8px;">What we do:</div>
+            <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                Each request is executed inside a single explicit transaction (<code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">BEGIN</code> / <code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">COMMIT</code>)
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                In parallel mode, each entity executes in its own connection and transaction
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                In RPC mode, the entire request executes as a single server-side function call in one transaction
+              </li>
+            </ul>
+          </div>
+
+          <div style="background: rgba(0,255,136,.08); border-left: 3px solid var(--ok); padding: 14px; border-radius: 6px;">
+            <div style="font-size: 13px; font-weight: 600; color: var(--ok); margin-bottom: 6px;">Intent:</div>
+            <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
+              This matches real request semantics and avoids per-statement commit overhead. Transactions are not nested, and all retries properly roll back failed transactions.
+            </div>
+          </div>
+        </div>
+
+        <!-- G2. Cache State & I/O Measurement -->
+        <div style="margin-bottom: 32px;">
+          <h4 style="font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 12px;">2. Cache state & I/O measurement</h4>
+          
+          <div style="background: var(--surface-2); padding: 16px; border-radius: 6px; margin-bottom: 12px;">
+            <div style="font-size: 13px; font-weight: 700; color: var(--brand-2); margin-bottom: 8px;">What we do:</div>
+            <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                We do <b>not</b> attempt to flush the OS page cache (not possible from PostgreSQL without host-level access)
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                PostgreSQL statistics are reset between benchmark modes using <code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">pg_stat_reset()</code>
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                Cache behavior is measured using:
+                <ul style="margin-top: 6px; padding-left: 20px;">
+                  <li><code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">pg_statio_user_tables</code> (buffer hits vs disk reads)</li>
+                  <li>Request-level hot/cold key composition</li>
+                </ul>
+              </li>
+            </ul>
+          </div>
+
+          <div style="background: var(--surface-2); padding: 16px; border-radius: 6px; margin-bottom: 12px;">
+            <div style="font-size: 13px; font-weight: 700; color: var(--brand-2); margin-bottom: 8px;">Why:</div>
+            <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                OS-level cache flushing is not portable, safe, or representative of production systems
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                Real systems operate under mixed cache residency, not fully cold starts
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                Cache behavior is driven by access patterns, not artificial eviction
+              </li>
+            </ul>
+          </div>
+
+          <div style="background: var(--surface-2); padding: 16px; border-radius: 6px; margin-bottom: 12px;">
+            <div style="font-size: 13px; font-weight: 700; color: var(--brand-2); margin-bottom: 8px;">Interpretation guidance:</div>
+            <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                "Cold" results represent logical coldness (low key reuse), not forced cache eviction
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                Disk reads and buffer hits reflect steady-state mixed workloads
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--brand-2);">•</span>
+                Results are conservative and production-aligned
+              </li>
+            </ul>
+          </div>
+
+          <div style="background: rgba(0,212,255,.08); border-left: 3px solid var(--brand-2); padding: 14px; border-radius: 6px;">
+            <div style="font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.6;">
+              Cache effects are modeled through access patterns and measured via PostgreSQL's own I/O counters — not via unrealistic cache flushing.
+            </div>
+          </div>
+        </div>
+
+        <!-- G3. What We Explicitly Did NOT Do (By Design) -->
+        <div style="margin-bottom: 32px;">
+          <h4 style="font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 12px;">3. What we explicitly did NOT do (by design)</h4>
+          
+          <div style="background: rgba(255,68,68,.08); border-left: 3px solid var(--bad); padding: 16px; border-radius: 6px;">
+            <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--bad);">✗</span>
+                <b>No OS-level cache flush</b>
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--bad);">✗</span>
+                <b>No Postgres configuration tuning</b> (<code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">shared_buffers</code>, <code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">effective_cache_size</code>, etc.)
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--bad);">✗</span>
+                <b>No schema-specific column pruning</b> (<code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">SELECT *</code> used deliberately)
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--bad);">✗</span>
+                <b>No server-side precomputation</b> outside RPC mode
+              </li>
+            </ul>
+            
+            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,68,68,.2);">
+              <div style="font-size: 13px; font-weight: 600; color: var(--bad); margin-bottom: 6px;">Purpose:</div>
+              <div style="font-size: 14px; color: var(--muted); line-height: 1.6;">
+                Make it clear these are baseline measurements, not maximum-optimization results.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- G4. Measurement Integrity Guarantees -->
+        <div style="margin-bottom: 32px;">
+          <h4 style="font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 12px;">4. Measurement integrity guarantees</h4>
+          
+          <div style="background: rgba(0,255,136,.08); border-left: 3px solid var(--ok); padding: 16px; border-radius: 6px;">
+            <ul style="list-style: none; padding: 0; margin: 0; font-size: 14px; line-height: 1.8; color: var(--muted);">
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--ok);">✓</span>
+                No inline <code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">EXPLAIN</code> is included in latency measurements
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--ok);">✓</span>
+                All latency metrics represent measured execution only
+              </li>
+              <li style="padding-left: 20px; position: relative; margin-bottom: 8px;">
+                <span style="position: absolute; left: 0; color: var(--ok);">✓</span>
+                Diagnostics (<code style="background: var(--surface); padding: 2px 6px; border-radius: 3px; font-size: 13px;">EXPLAIN</code>, slow query logging) are sampled and executed out-of-band
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- H. Known Limitations -->
       <div class="content-card">
-        <h3 class="card-title">G. Known limitations</h3>
+        <h3 class="card-title">H. Known limitations</h3>
         <ul style="list-style: none; padding: 0; margin: 0; font-size: 15px; line-height: 2; color: var(--muted);">
           <li style="padding-left: 24px; position: relative; margin-bottom: 12px;">
             <span style="position: absolute; left: 0; color: var(--error); font-weight: 700;">✗</span>

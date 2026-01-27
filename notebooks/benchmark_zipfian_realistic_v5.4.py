@@ -1280,6 +1280,7 @@ def fetch_features_for_request(conn, entities_with_keys, iteration_idx=0, sample
 
             gantt_data.append({
                 "entity": entity_info["entity"],
+                "segment": "db_exec",  # ✅ V5.4: Consistent with parallel mode (serial has no pool wait)
                 "start_ms": (entity_start - request_start) * 1000,
                 "end_ms": (entity_end - request_start) * 1000
             })
@@ -1387,6 +1388,7 @@ def fetch_features_binpacked_serial(conn, entities_with_keys, iteration_idx=0, r
 
         gantt_data.append({
             "entity": entity_info["entity"],
+            "segment": "db_exec",  # ✅ V5.4: Consistent with parallel mode (binpacked has no pool wait)
             "start_ms": (entity_start - request_start) * 1000,
             "end_ms": (entity_end - request_start) * 1000
         })
@@ -1400,16 +1402,17 @@ def fetch_entity_worker(entity_info, request_start, log_query_timings=False, slo
     
     ✅ V5.3: Now logs slow feature-group queries for parallel mode
     ✅ V5.4: Explicit transaction scope per worker connection
+    ✅ V5.4: Returns two Gantt segments (pool_wait + db_exec) for honest wall-clock visualization
     """
     pool_wait_start = time.perf_counter()
     with pool.connection() as conn:  # type: ignore
-        pool_wait_ms = (time.perf_counter() - pool_wait_start) * 1000
+        entity_start = time.perf_counter()
+        pool_wait_ms = (entity_start - pool_wait_start) * 1000
         if pool_wait_ms > 100:
             print(f"         ⚠️  Slow pool acquisition: {pool_wait_ms:.0f}ms for {entity_info['entity']}")
 
         conn.execute("BEGIN")
         try:
-            entity_start = time.perf_counter()
             results, queries_executed, group_timings = fetch_entity_binpacked(
                 conn,
                 entity_info["entity"],
@@ -1423,13 +1426,23 @@ def fetch_entity_worker(entity_info, request_start, log_query_timings=False, slo
             entity_end = time.perf_counter()
             latency_ms = (entity_end - entity_start) * 1000
 
-            gantt_entry = {
-                "entity": entity_info["entity"],
-                "start_ms": (entity_start - request_start) * 1000,
-                "end_ms": (entity_end - request_start) * 1000
-            }
+            # ✅ V5.4: Return two Gantt segments for visualization (pool_wait + db_exec)
+            gantt_segments = [
+                {
+                    "entity": entity_info["entity"],
+                    "segment": "pool_wait",
+                    "start_ms": (pool_wait_start - request_start) * 1000,
+                    "end_ms": (entity_start - request_start) * 1000
+                },
+                {
+                    "entity": entity_info["entity"],
+                    "segment": "db_exec",
+                    "start_ms": (entity_start - request_start) * 1000,
+                    "end_ms": (entity_end - request_start) * 1000
+                }
+            ]
 
-            return entity_info["entity"], latency_ms, gantt_entry, queries_executed, pool_wait_ms, group_timings
+            return entity_info["entity"], latency_ms, gantt_segments, queries_executed, pool_wait_ms, group_timings
         except Exception:
             try:
                 conn.execute("ROLLBACK")
@@ -1441,12 +1454,14 @@ def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_w
     """Fetch features using bin-packed queries with parallel execution.
     
     ✅ V5.3: Now aggregates slow feature-group queries from parallel workers
+    ✅ V5.4: Returns pool wait times as dict (paired with entities) for accurate wall-clock latency
+    ✅ V5.4: Gantt data now includes both pool_wait and db_exec segments per entity
     """
     entity_timings = {}
+    entity_pool_waits = {}  # ✅ Dict to match entity_timings structure (futures complete out of order)
     gantt_data = []
     query_timings = []
     total_queries = 0
-    pool_wait_times = []
 
     if request_start is None:
         request_start = time.perf_counter()
@@ -1457,14 +1472,14 @@ def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_w
             for entity_info in entities_with_keys
         ]
         for future in futures:
-            entity, latency_ms, gantt_entry, queries_executed, pool_wait_ms, group_timings = future.result()
+            entity, latency_ms, gantt_segments, queries_executed, pool_wait_ms, group_timings = future.result()
             entity_timings[entity] = latency_ms
-            gantt_data.append(gantt_entry)
+            entity_pool_waits[entity] = pool_wait_ms  # ✅ Track per entity (safe for out-of-order completion)
+            gantt_data.extend(gantt_segments)  # ✅ Extend with both segments (pool_wait + db_exec)
             total_queries += queries_executed
-            pool_wait_times.append(pool_wait_ms)
             query_timings.extend(group_timings)  # ✅ Aggregate slow queries from all workers
 
-    return entity_timings, 0, gantt_data, query_timings, total_queries, pool_wait_times
+    return entity_timings, 0, gantt_data, query_timings, total_queries, entity_pool_waits
 
 def fetch_features_rpc_request(conn, entities_with_keys, iteration_idx=0, request_start=None, log_query_timings=False, slow_threshold_ms=40):
     """Fetch features using a single server-side RPC call that returns JSONB.
@@ -1571,17 +1586,20 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
     # Initialize pool per-mode for parallel
     if current_mode == "binpacked_parallel":
         pool_max_size = current_workers * 10
+        # ✅ V5.4: Pre-warm at least 6 connections (for 3 entities + buffer) to avoid connection creation overhead
+        pool_min_size = max(6, current_workers * 2)
+        pool_min_size = min(pool_min_size, pool_max_size)  # Guard: never exceed max_size
         print(f"🔗 Initializing connection pool ({current_workers} workers)...")
         pool = ConnectionPool(
             conninfo=psycopg.conninfo.make_conninfo(**LAKEBASE_CONFIG),
-            min_size=min(current_workers * 2, 10),
+            min_size=pool_min_size,
             max_size=pool_max_size,
             timeout=10.0,
             max_idle=300,
             max_lifetime=1800,
             check=ConnectionPool.check_connection
         )
-        print(f"   ✅ Pool initialized: max={pool_max_size} (workers={current_workers})")
+        print(f"   ✅ Pool initialized: min={pool_min_size}, max={pool_max_size} (workers={current_workers})")
         print()
     else:
         pool = None
@@ -1705,13 +1723,22 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                                 slow_query_count = 0
 
                     elif current_mode == "binpacked_parallel":
-                        entity_timings, io_blocks, gantt_data, query_timings, queries_count, pool_wait_times = fetch_features_binpacked_parallel(
+                        entity_timings, io_blocks, gantt_data, query_timings, queries_count, entity_pool_waits = fetch_features_binpacked_parallel(
                             entities_for_request, i, current_workers, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS
                         )
                         total_queries_executed += queries_count
                         
-                        # ✅ V5.3: Calculate request latency (max for parallel mode)
-                        request_latency_ms = max(entity_timings.values()) if entity_timings else 0
+                        # ✅ V5.4: Calculate wall-clock request latency (includes pool wait time)
+                        # Each entity's wall-clock time = pool_wait + db_execution
+                        # Request latency = max across all entities (critical path)
+                        if entity_timings:
+                            entity_wall_clock_times = {
+                                entity: entity_timings[entity] + entity_pool_waits.get(entity, 0)
+                                for entity in entity_timings
+                            }
+                            request_latency_ms = max(entity_wall_clock_times.values())
+                        else:
+                            request_latency_ms = 0
                         
                         # ✅ V5.3: Persist slow feature-group queries for parallel mode
                         if log_timings and query_timings:
@@ -1762,16 +1789,13 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
             if i < 3:
                 print(f"            Completed in {(time.time()-t0)*1000:.1f}ms")
 
-            # ✅ V5.4: Normalize entity timings for RPC vs multi-entity modes
+            # ✅ V5.4: Use canonical request_latency_ms (already computed above with mode-specific logic)
+            # For parallel mode, this now includes pool wait time (wall-clock user-perceived latency)
+            # For other modes, this is DB execution time (serial/binpacked sum, RPC single call)
+            latency_ms = request_latency_ms
+            
+            # ✅ V5.4: Normalize entity timings for entity-level analysis (charts, contributions, etc.)
             norm_entity_timings, rpc_call_ms, is_rpc = normalize_entity_timings(entity_timings, current_mode)
-
-            # Calculate request latency based on mode semantics
-            if is_rpc:
-                latency_ms = rpc_call_ms
-            elif current_mode == "binpacked_parallel":
-                latency_ms = max(norm_entity_timings.values()) if norm_entity_timings else 0
-            else:
-                latency_ms = sum(norm_entity_timings.values()) if norm_entity_timings else 0
 
             latencies.append(latency_ms)
             cache_scores.append(hot_entities / len(ENTITY_NAMES))
