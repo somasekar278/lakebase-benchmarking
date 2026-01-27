@@ -4368,17 +4368,17 @@ document.addEventListener('DOMContentLoaded', function() {
         this.classList.add('is-active');
         this.setAttribute('aria-selected', 'true');
         
-        // Hide all seg-panel siblings
+        // Hide all tab-panel siblings (note: it's tab-panel, not seg-panel)
         const parentCard = tabGroup.closest('.card, .content-card');
         if (parentCard) {
-          parentCard.querySelectorAll('.seg-panel').forEach(panel => {
-            panel.style.display = 'none';
+          parentCard.querySelectorAll('.tab-panel').forEach(panel => {
+            panel.classList.remove('is-active');
           });
           
           // Show target panel
           const targetPanel = parentCard.querySelector('#' + targetTabId);
           if (targetPanel) {
-            targetPanel.style.display = 'block';
+            targetPanel.classList.add('is-active');
           }
         }
       });
