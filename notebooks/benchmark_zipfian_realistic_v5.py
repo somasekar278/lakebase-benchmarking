@@ -1341,7 +1341,7 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
             request_start = time.perf_counter()  # ✅ V5: Track request start for Gantt
             
             # ✅ V5.1: Generate unique request_id for tail amplification analysis
-            request_id = f"{RUN_ID}_{current_mode}_{hot_pct}_{i}"
+            request_id = f"{RUN_ID}_{current_mode}_{hot_pct}_{i}_{uuid.uuid4().hex[:8]}"
             log_timings = LOG_QUERY_TIMINGS  # Always track, but only log slow queries
             
             for attempt in range(max_retries):

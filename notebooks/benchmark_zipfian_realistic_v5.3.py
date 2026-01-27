@@ -1423,7 +1423,7 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
 
             max_retries = 3
             request_start = time.perf_counter()
-            request_id = f"{RUN_ID}_{current_mode}_{hot_pct}_{i}"
+            request_id = f"{RUN_ID}_{current_mode}_{hot_pct}_{i}_{uuid.uuid4().hex[:8]}"
             log_timings = LOG_QUERY_TIMINGS
 
             for attempt in range(max_retries):
