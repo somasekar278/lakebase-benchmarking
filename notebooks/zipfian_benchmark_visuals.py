@@ -2089,9 +2089,8 @@ fig.patch.set_facecolor('white')
 ax.set_xlim(0, 10)
 ax.set_ylim(0, 100)
 
-# Add takeaway box
-fig.text(0.72, 0.25, 
-         '🎯 Executive Takeaway:\n\n'
+# Add takeaway box (positioned inward to avoid right-edge clipping)
+fig.text(0.66, 0.25, 
          'Reducing lookup count (30→10) is the\n'
          'most reliable "math win" because it\n'
          'reduces opportunities for tail events.\n\n'
