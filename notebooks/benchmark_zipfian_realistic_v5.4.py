@@ -320,6 +320,26 @@ def get_conn():
         raise
     return conn
 
+# Global connection pool for RPC3 mode (reused across requests)
+RPC3_WORKER_POOL = None
+
+def get_rpc3_pool():
+    """Get or create connection pool for RPC3 workers.
+    
+    Uses a shared pool (3-6 connections) to avoid connection overhead
+    per request, making it representative of steady-state serving.
+    """
+    global RPC3_WORKER_POOL
+    if RPC3_WORKER_POOL is None:
+        print("🔗 Initializing RPC3 worker connection pool (min=3, max=6)...")
+        RPC3_WORKER_POOL = ConnectionPool(
+            conninfo=psycopg.conninfo.make_conninfo(**LAKEBASE_CONFIG),
+            min_size=3,
+            max_size=6,
+            timeout=10
+        )
+    return RPC3_WORKER_POOL
+
 def refresh_connection_if_stale(conn):
     """Check if connection is healthy and refresh if needed."""
     try:
@@ -1611,7 +1631,13 @@ def fetch_features_binpacked_parallel(entities_with_keys, iteration_idx=0, num_w
             total_queries += queries_executed
             query_timings.extend(group_timings)  # ✅ Aggregate slow queries from all workers
 
-    return entity_timings, 0, gantt_data, query_timings, total_queries, entity_pool_waits
+    # ✅ Compute wall-clock timings: DB-only + pool wait (what user experiences)
+    entity_wall_clock_timings = {
+        entity: entity_timings[entity] + entity_pool_waits[entity]
+        for entity in entity_timings.keys()
+    }
+
+    return entity_timings, 0, gantt_data, query_timings, total_queries, entity_pool_waits, entity_wall_clock_timings
 
 def fetch_features_rpc_request(conn, entities_with_keys, iteration_idx=0, request_start=None, log_query_timings=False, slow_threshold_ms=40):
     """Fetch features using a single server-side RPC call that returns JSONB.
@@ -1781,32 +1807,32 @@ def fetch_features_rpc3_parallel(entities_with_keys, req_id, run_id, request_sta
     # Build entity map
     entity_map = {e["entity"]: e["hashkey"] for e in entities_with_keys}
     
+    # Get shared connection pool for RPC3 workers
+    rpc3_pool = get_rpc3_pool()
+    
     # Worker function for ThreadPoolExecutor
     def fetch_entity_worker(entity_name):
-        """Worker that opens its own connection and calls the entity RPC."""
-        # Open dedicated connection for this worker
-        worker_conn = None
+        """Worker that uses pooled connection and calls the entity RPC."""
         try:
-            worker_conn = psycopg.connect(**LAKEBASE_CONFIG)
-            worker_conn.autocommit = False  # Use transactions
-            
-            entity_hash_key = entity_map[entity_name]
-            
-            # Call entity RPC
-            wall_ms, db_ms, pool_wait_ms, gantt_segments, payload_bytes, result_json = call_entity_rpc(
-                worker_conn, entity_name, entity_hash_key, req_id, run_id, request_start
-            )
-            
-            return {
-                "entity": entity_name,
-                "wall_ms": wall_ms,
-                "db_ms": db_ms,
-                "pool_wait_ms": pool_wait_ms,
-                "gantt_segments": gantt_segments,
-                "payload_bytes": payload_bytes,
-                "result": result_json,
-                "error": None
-            }
+            # Acquire connection from pool (representative of steady-state serving)
+            with rpc3_pool.connection() as worker_conn:
+                entity_hash_key = entity_map[entity_name]
+                
+                # Call entity RPC
+                wall_ms, db_ms, pool_wait_ms, gantt_segments, payload_bytes, result_json = call_entity_rpc(
+                    worker_conn, entity_name, entity_hash_key, req_id, run_id, request_start
+                )
+                
+                return {
+                    "entity": entity_name,
+                    "wall_ms": wall_ms,
+                    "db_ms": db_ms,
+                    "pool_wait_ms": pool_wait_ms,
+                    "gantt_segments": gantt_segments,
+                    "payload_bytes": payload_bytes,
+                    "result": result_json,
+                    "error": None
+                }
         
         except Exception as e:
             return {
@@ -1819,13 +1845,6 @@ def fetch_features_rpc3_parallel(entities_with_keys, req_id, run_id, request_sta
                 "result": None,
                 "error": str(e)
             }
-        
-        finally:
-            if worker_conn:
-                try:
-                    worker_conn.close()
-                except Exception:
-                    pass
     
     # Execute 3 parallel tasks
     entity_results = {}
@@ -2041,20 +2060,15 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                                 slow_query_count = 0
 
                     elif current_mode == "binpacked_parallel":
-                        entity_timings, io_blocks, gantt_data, query_timings, queries_count, entity_pool_waits = fetch_features_binpacked_parallel(
+                        entity_timings, io_blocks, gantt_data, query_timings, queries_count, entity_pool_waits, entity_wall_clock_timings = fetch_features_binpacked_parallel(
                             entities_for_request, i, current_workers, request_start, log_timings, SLOW_QUERY_THRESHOLD_MS
                         )
                         total_queries_executed += queries_count
                         
-                        # ✅ V5.4: Calculate wall-clock request latency (includes pool wait time)
-                        # Each entity's wall-clock time = pool_wait + db_execution
+                        # ✅ V5.4: Use pre-computed wall-clock timings (DB + pool wait)
                         # Request latency = max across all entities (critical path)
-                        if entity_timings:
-                            entity_wall_clock_times = {
-                                entity: entity_timings[entity] + entity_pool_waits.get(entity, 0)
-                                for entity in entity_timings
-                            }
-                            request_latency_ms = max(entity_wall_clock_times.values())
+                        if entity_wall_clock_timings:
+                            request_latency_ms = max(entity_wall_clock_timings.values())
                         else:
                             request_latency_ms = 0
                         
