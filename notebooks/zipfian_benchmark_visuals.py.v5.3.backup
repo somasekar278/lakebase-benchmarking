@@ -258,12 +258,10 @@ fig, ax = plt.subplots(figsize=(14, 7))
 
 # Checkout.com professional color scheme
 checkout_blue = '#357FF5'
-checkout_cyan = '#00D4FF'
 MODE_STYLES = {
     'serial': {'marker': 'o', 'linestyle': '-', 'color': '#94A3B8', 'label': 'Serial (30 queries)', 'linewidth': 2.5},
     'binpacked': {'marker': 's', 'linestyle': '-', 'color': '#60A5FA', 'label': 'Bin-packed (10 queries)', 'linewidth': 2.5},
-    'binpacked_parallel': {'marker': '^', 'linestyle': '-', 'color': checkout_blue, 'label': 'Parallel (10 queries, 3 workers)', 'linewidth': 3},
-    'rpc_request_json': {'marker': 'd', 'linestyle': '-', 'color': checkout_cyan, 'label': 'RPC (1 query)', 'linewidth': 3.5}
+    'binpacked_parallel': {'marker': '^', 'linestyle': '-', 'color': checkout_blue, 'label': 'Parallel (10 queries, 3 workers)', 'linewidth': 3}
 }
 
 for mode, style in MODE_STYLES.items():
@@ -313,8 +311,7 @@ ax.text(10, y_max * 0.95, 'Cold Reality\nZone',
 mode_y_offsets = {
     'serial': 0,
     'binpacked': -10,  # Offset down
-    'binpacked_parallel': -20,  # Offset down more
-    'rpc_request_json': -30  # Offset down most (best performer, lowest on chart)
+    'binpacked_parallel': -20  # Offset down more
 }
 
 for mode, style in MODE_STYLES.items():
@@ -1289,21 +1286,18 @@ if 'parallel_workers' in cold_points.columns:
         print(f"   🔍 Debug - Parallel workers: {parallel_data['parallel_workers'].values}")
 
 # Group by mode and hot%
-modes = ['serial', 'binpacked', 'binpacked_parallel', 'rpc_request_json']
+modes = ['serial', 'binpacked', 'binpacked_parallel']
 mode_labels = {
     'serial': 'Serial\n(30 queries)',
     'binpacked': 'Bin-packed\n(10 queries)',
-    'binpacked_parallel': 'Parallel\n(10 queries, 3 workers)',
-    'rpc_request_json': 'RPC\n(1 query)'
+    'binpacked_parallel': 'Parallel\n(10 queries, 3 workers)'
 }
 # Checkout.com professional blue color scheme
 checkout_blue = '#357FF5'  # Primary blue from Checkout.com
-checkout_cyan = '#00D4FF'   # Checkout cyan for RPC mode
 mode_colors = {
     'serial': '#94A3B8',       # Subtle gray-blue for baseline
     'binpacked': '#60A5FA',    # Lighter blue for intermediate
-    'binpacked_parallel': checkout_blue,  # Bright Checkout blue
-    'rpc_request_json': checkout_cyan  # Cyan for RPC ultimate optimization
+    'binpacked_parallel': checkout_blue  # Bright Checkout blue for best performer
 }
 
 # Simple bar chart - one bar per mode
@@ -1355,8 +1349,8 @@ fig.patch.set_facecolor('white')
 
 # Add 79ms reference line (red for visibility)
 ax.axhline(79, color='#EF4444', linestyle='--', linewidth=2, alpha=0.8, zorder=2)
-# Position text on the FAR RIGHT of chart (beyond all bars at x=3.5)
-ax.text(3.5, 79, '← 79ms target', va='center', ha='left', fontsize=10, 
+# Position text on the FAR RIGHT of chart (beyond all bars at x=2.5)
+ax.text(2.5, 79, '← 79ms target', va='center', ha='left', fontsize=10, 
         fontweight='600', color='#DC2626', 
         bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='#EF4444', 
                  alpha=0.95, linewidth=1.5))
@@ -1384,14 +1378,8 @@ queries_data = []
 for mode in modes:
     mode_df = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == 80)]
     if len(mode_df) > 0:
-        # Fallback values by mode
-        if mode == 'serial':
-            fallback = 30
-        elif mode == 'rpc_request_json':
-            fallback = 1
-        else:
-            fallback = 10
-        queries = mode_df.iloc[0].get('queries_per_request', fallback)
+        queries = mode_df.iloc[0].get('queries_per_request', 
+                                       30 if mode == 'serial' else 10)  # Fallback
         queries_data.append({
             'mode': mode,
             'label': mode_labels[mode].replace('\n', ' '),
@@ -1429,21 +1417,6 @@ if queries_data:
                color='#357FF5', 
                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
                         edgecolor='#357FF5', alpha=0.95, linewidth=2))
-    
-    # Add HERO annotation for Serial → RPC (if RPC data available)
-    if len(queries_data) >= 4:
-        serial_q = queries_data[0]['queries']
-        rpc_q = queries_data[3]['queries']
-        rpc_reduction_pct = ((serial_q - rpc_q) / serial_q * 100)
-        
-        # Dramatic annotation in cyan for RPC breakthrough
-        ax.annotate('', xy=(2.5, serial_q - 2), xytext=(2.5, rpc_q + 0.5),
-                   arrowprops=dict(arrowstyle='<->', color='#00D4FF', lw=3, alpha=0.9))
-        ax.text(2.7, (serial_q + rpc_q) / 2, f'-{rpc_reduction_pct:.0f}%\nRPC Win',
-               ha='left', va='center', fontsize=13, fontweight='800',
-               color='#00D4FF', 
-               bbox=dict(boxstyle='round,pad=0.6', facecolor='white', 
-                        edgecolor='#00D4FF', alpha=0.98, linewidth=2.5))
 
     # Professional styling - consistent with other charts
     ax.set_ylabel('Queries Per Request', fontsize=12, fontweight='600', labelpad=10, color='#475569')
@@ -1599,11 +1572,11 @@ try:
     # Standardized chart size for all executive summary charts
     fig, ax = plt.subplots(figsize=(14, 7))
 
-    # Prepare heatmap data: Rows = [0% hot, 10% hot], Cols = [Serial, Binpacked, Parallel, RPC]
+    # Prepare heatmap data: Rows = [0% hot, 10% hot], Cols = [Serial, Binpacked, Parallel]
     # Note: Benchmark tests [100, 90, 80, 70, 60, 50, 30, 10, 0] - no 20%!
     hot_levels = [0, 10]
-    modes = ['serial', 'binpacked', 'binpacked_parallel', 'rpc_request_json']
-    mode_labels_short = ['Serial\n(30 queries)', 'Bin-packed\n(10 queries)', 'Parallel\n(3 workers)', 'RPC\n(1 query)']
+    modes = ['serial', 'binpacked', 'binpacked_parallel']
+    mode_labels_short = ['Serial\n(30 queries)', 'Bin-packed\n(10 queries)', 'Parallel\n(3 workers)']
 
     # Extract P99 values - check if data exists
     heatmap_data = []
@@ -1651,7 +1624,7 @@ try:
     cell_width = 1.5  # Wider cells
     cell_height = 1.0  # Taller cells
     
-    ax.set_xlim(-x_padding, 4 * cell_width + x_padding)
+    ax.set_xlim(-x_padding, 3 * cell_width + x_padding)
     ax.set_ylim(-y_padding, 2 * cell_height + y_padding)
     ax.set_aspect('equal')  # Equal aspect for proper cell proportions
 
@@ -1694,8 +1667,8 @@ try:
                        ha='center', va='center', fontsize=12, fontweight='500', 
                        color='#94A3B8', alpha=0.7)
 
-    # Set labels (adjusted for 4 columns)
-    ax.set_xticks([cell_width * 0.5, cell_width * 1.5, cell_width * 2.5, cell_width * 3.5])
+    # Set labels (adjusted for new cell dimensions)
+    ax.set_xticks([cell_width * 0.5, cell_width * 1.5, cell_width * 2.5])
     ax.set_xticklabels(mode_labels_short, fontsize=12, fontweight='600', color='#475569')
     ax.set_yticks([cell_height * 0.5, cell_height * 1.5])
     ax.set_yticklabels(['10% Hot\n(Mostly Cold)', '0% Hot\n(Fully Cold)'], fontsize=12, fontweight='600', color='#475569')
