@@ -777,6 +777,11 @@ def ensure_results_table(conn):
 def ensure_rpc_function(conn):
     """Create server-side RPC function for fetching all features in one call."""
     with conn.cursor() as cur:
+        # Drop old function if it exists (parameter names may have changed)
+        cur.execute(f"""
+            DROP FUNCTION IF EXISTS {SCHEMA}.fetch_request_features(TEXT, TEXT, TEXT);
+        """)
+        
         # Build the function SQL with LEFT JOIN LATERAL for all 30 tables
         cur.execute(f"""
             CREATE OR REPLACE FUNCTION {SCHEMA}.fetch_request_features(
