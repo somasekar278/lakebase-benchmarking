@@ -414,6 +414,14 @@ def flush_cache(conn):
         print("   ✅ Session state cleared (DISCARD ALL)")
     except Exception as e:
         print(f"   ⚠️  Could not discard session state: {e}")
+        # ✅ Fix #6: Enhanced diagnostics
+        try:
+            print(f"      Diagnostics: autocommit={conn.autocommit}, transaction_status={conn.info.transaction_status}")
+            # Try emergency rollback
+            conn.rollback()
+            print(f"      Emergency rollback succeeded")
+        except Exception as e2:
+            print(f"      Emergency rollback also failed: {e2}")
     finally:
         conn.autocommit = original_autocommit
     
@@ -1032,7 +1040,11 @@ def persist_results(conn, hot_pct, results):
                 ADD COLUMN IF NOT EXISTS cold_sampling_without_replacement BOOLEAN,
                 ADD COLUMN IF NOT EXISTS explain_sample_rate INT,
                 ADD COLUMN IF NOT EXISTS explain_iterations_count INT,
-                ADD COLUMN IF NOT EXISTS latency_explain_included BOOLEAN
+                ADD COLUMN IF NOT EXISTS latency_explain_included BOOLEAN,
+                -- Fix #5: Additional metrics
+                ADD COLUMN IF NOT EXISTS pool_wait_ms DOUBLE PRECISION,
+                ADD COLUMN IF NOT EXISTS retry_count INT,
+                ADD COLUMN IF NOT EXISTS query_error_count INT
             """)
             conn.commit()
     except Exception:
@@ -1069,6 +1081,10 @@ def persist_results(conn, hot_pct, results):
                 latency_per_query_ms,
                 entity_timing_detail,
                 max_concurrent_queries,
+                pool_wait_ms,
+                retry_count,
+                query_error_count,
+                actual_max_concurrency,
                 notes
             ) VALUES (
                 %s, %s, %s, %s,
@@ -1080,6 +1096,7 @@ def persist_results(conn, hot_pct, results):
                 %s,
                 %s, %s,
                 %s, %s, %s,
+                %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s
             )
@@ -1112,6 +1129,10 @@ def persist_results(conn, hot_pct, results):
             results.get("latency_per_query_ms"),
             json.dumps(results.get("entity_timing_detail", {})),
             results.get("max_concurrent_queries"),
+            results.get("pool_wait_ms"),
+            results.get("retry_count"),
+            results.get("query_error_count"),
+            results.get("actual_max_concurrency"),
             f"Multi-entity Zipfian benchmark V5.4 (mode: {results['fetch_mode']}, workers: {results.get('parallel_workers', 'N/A')})"
         ))
     conn.commit()
@@ -1971,6 +1992,11 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
         slow_query_count = 0
         SLOW_QUERY_BATCH_SIZE = 100
         total_queries_executed = 0
+        
+        # ✅ Fix #5: Track additional metrics for persistence
+        all_pool_wait_times = []  # Track pool wait per request
+        total_retries = 0  # Track retry count
+        total_query_errors = 0  # Track query errors
 
         if hot_pct == 0:
             cold_keys_pool = {entity: list(entity_keys[entity]["cold"]) for entity in ENTITY_NAMES}
@@ -2018,7 +2044,10 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
             request_id = f"{RUN_ID}_{current_mode}_{hot_pct}_{i}_{uuid.uuid4().hex[:8]}"
             log_timings = LOG_QUERY_TIMINGS
 
+            retry_count_for_request = 0
             for attempt in range(max_retries):
+                if attempt > 0:
+                    retry_count_for_request += 1
                 try:
                     if current_mode == "serial":
                         with request_tx(conn):
@@ -2033,6 +2062,7 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                         payload_size_total += executor_metrics.get("payload_size_bytes", 0) or 0
 
                         request_latency_ms = sum(entity_timings.values()) if entity_timings else 0
+                        all_pool_wait_times.append(0)  # Serial has no pool wait
                         if log_timings and query_timings:
                             persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
                             slow_query_count += len(query_timings)
@@ -2050,6 +2080,7 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                         total_queries_executed += queries_count
 
                         request_latency_ms = sum(entity_timings.values()) if entity_timings else 0
+                        all_pool_wait_times.append(0)  # Binpacked has no pool wait
                         if log_timings and query_timings:
                             persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
                             slow_query_count += len(query_timings)
@@ -2072,6 +2103,10 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                         else:
                             request_latency_ms = 0
                         
+                        # Track pool wait time (max across entities)
+                        max_pool_wait = max(entity_pool_waits.values()) if entity_pool_waits else 0
+                        all_pool_wait_times.append(max_pool_wait)
+                        
                         # ✅ V5.3: Persist slow feature-group queries for parallel mode
                         if log_timings and query_timings:
                             persist_query_timings(conn, RUN_ID, request_id, i, current_mode, current_workers, hot_pct, query_timings, entity_hot_sets, request_latency_ms)
@@ -2091,6 +2126,7 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                         
                         # RPC mode: single call latency
                         request_latency_ms = entity_timings.get("rpc_call", 0)
+                        all_pool_wait_times.append(0)  # RPC single has no pool wait (single connection)
                         
                         # Track payload size
                         payload_size_total += payload_bytes
@@ -2117,6 +2153,10 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                         else:
                             request_latency_ms = 0
                         
+                        # Track pool wait time (max across entities from pooled connections)
+                        max_pool_wait = max(entity_pool_waits.values()) if entity_pool_waits else 0
+                        all_pool_wait_times.append(max_pool_wait)
+                        
                         # Track payload size
                         payload_size_total += payload_bytes
                         
@@ -2132,9 +2172,12 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
                             "entities": gantt_data
                         })
 
+                    # Track successful completion (after retries)
+                    total_retries += retry_count_for_request
                     break
 
                 except (psycopg.OperationalError, psycopg.InterfaceError) as e:
+                    total_query_errors += 1
                     if attempt < max_retries - 1:
                         print(f"         ⚠️  Connection error (attempt {attempt + 1}/{max_retries}): {str(e)[:100]}")
                         conn = refresh_connection_if_stale(conn)
@@ -2265,6 +2308,20 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
         # Fix #1: non_explain_iters -> measured_iters
         print(f"         📊 Queries/request: {queries_per_request:.1f} (computed from {measured_iters} iterations)")
 
+        # ✅ Fix #5: Compute per-mode metrics
+        if current_mode in ["serial", "binpacked", "rpc_request_json"]:
+            avg_pool_wait_ms = 0.0
+            actual_concurrency = 1
+        elif current_mode == "binpacked_parallel":
+            avg_pool_wait_ms = float(np.mean(all_pool_wait_times)) if all_pool_wait_times else 0.0
+            actual_concurrency = min(current_workers, 3)  # capped by entity count
+        elif current_mode == "rpc3_parallel":
+            avg_pool_wait_ms = float(np.mean(all_pool_wait_times)) if all_pool_wait_times else 0.0
+            actual_concurrency = 3
+        else:
+            avg_pool_wait_ms = 0.0
+            actual_concurrency = 1
+
         # ✅ V5.4: Build results dict with RPC-compatible metrics
         results[hot_pct] = {
             "p50": np.percentile(lat, 50),
@@ -2291,7 +2348,12 @@ for mode_idx, mode_config in enumerate(MODE_CONFIGS):
             "parallel_workers": current_workers,
             "latency_per_query_ms": (lat.mean() / queries_per_request) if queries_per_request else None,
             "entity_timing_detail": gantt_samples,
-            "max_concurrent_queries": min(current_workers, len(ENTITY_NAMES)) if current_mode == "binpacked_parallel" else None
+            "max_concurrent_queries": min(current_workers, len(ENTITY_NAMES)) if current_mode == "binpacked_parallel" else None,
+            # ✅ Fix #5: Add persistence columns
+            "pool_wait_ms": avg_pool_wait_ms,
+            "retry_count": total_retries,
+            "query_error_count": total_query_errors,
+            "actual_max_concurrency": actual_concurrency
         }
 
         persist_results(conn, hot_pct, results[hot_pct])
