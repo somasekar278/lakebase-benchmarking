@@ -2080,7 +2080,7 @@ slow_query_query = f"""
       FROM features.zipfian_slow_query_log
       WHERE run_id = '{RUN_ID}'
         AND mode = 'serial'
-        AND query_latency_ms > 100
+        AND query_latency_ms >= 40
     )
     SELECT
       b.mode AS mode,
@@ -2153,7 +2153,7 @@ try:
         # Styling
         ax.set_xlabel('Hot Traffic % (per entity)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
         ax.set_ylabel('Probability of Tail Amplification (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
-        ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query >100ms)\n(Derived from per-statement slow-query logs)',
+        ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query ≥40ms)\n(Derived from per-statement slow-query logs)',
                      fontsize=12, fontweight='600', pad=20, color='#1E293B')
         ax.legend(fontsize=10, loc='upper left', framealpha=0.95, edgecolor='#E2E8F0', fancybox=False)
         ax.grid(True, alpha=0.15, linewidth=1, color='#CBD5E1')
@@ -2187,7 +2187,7 @@ try:
         ax.text(0.5, 0.5, placeholder_msg, 
                ha='center', va='center', fontsize=13, color='#64748B', transform=ax.transAxes,
                bbox=dict(boxstyle='round,pad=1', facecolor='#F8FAFC', edgecolor='#E2E8F0', linewidth=2))
-        ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query >100ms)',
+        ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query ≥40ms)',
                      fontsize=13, fontweight='600', pad=20, color='#1E293B')
         ax.axis('off')
         fig.patch.set_facecolor('white')
@@ -2204,7 +2204,7 @@ except Exception as e:
     ax.text(0.5, 0.5, error_msg, 
            ha='center', va='center', fontsize=13, color='#64748B', transform=ax.transAxes,
            bbox=dict(boxstyle='round,pad=1', facecolor='#F8FAFC', edgecolor='#E2E8F0', linewidth=2))
-    ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query >100ms)',
+    ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query ≥40ms)',
                  fontsize=13, fontweight='600', pad=20, color='#1E293B')
     ax.axis('off')
     fig.patch.set_facecolor('white')
