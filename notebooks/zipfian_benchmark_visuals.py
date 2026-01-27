@@ -2943,7 +2943,7 @@ if results_80:
     best_p99 = min(r['p99_ms'] for r in results_80)
     best_mode_row = next(r for r in results_80 if r['p99_ms'] == best_p99)
     best_mode = f"{best_mode_row['fetch_mode']}"
-    if 'parallel_workers' in best_mode_row and best_mode_row['parallel_workers']:
+    if 'parallel_workers' in best_mode_row and pd.notna(best_mode_row['parallel_workers']):
         best_mode += f" w={int(best_mode_row['parallel_workers'])}"
     
     ref_p99 = 79.0
