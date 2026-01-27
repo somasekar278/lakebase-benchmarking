@@ -1764,100 +1764,57 @@
               under fan-out—especially when reads are cold.
             </p>
 
-            <!-- Sidebar layout: Question buttons left, Charts right -->
-            <div style="display: grid; grid-template-columns: 280px 1fr; gap: 20px; margin-top: 16px;">
+            <!-- Template B: Tabbed Chart Card -->
+            <div class="chart-card" style="margin-top: 16px;">
+              <div class="chart-card-head">
+                <div>
+                  <div class="chart-card-title">Execution strategy comparison</div>
+                  <div class="chart-card-sub">Compare serving modes to understand what controls request-level tail under fan-out</div>
+                </div>
+                
+                <div class="seg-tabs" role="tablist" aria-label="Chart selection tabs">
+                  <button class="seg-tab is-active" data-tab="chart1" role="tab" aria-selected="true">Overview</button>
+                  <button class="seg-tab" data-tab="chart2" role="tab" aria-selected="false">P99 by mode</button>
+                  <button class="seg-tab" data-tab="chart3" role="tab" aria-selected="false">Hot% curves</button>
+                  <button class="seg-tab" data-tab="chart4" role="tab" aria-selected="false">Fan-out</button>
+                  <button class="seg-tab" data-tab="chart5" role="tab" aria-selected="false">Amplification</button>
+                </div>
+              </div>
               
-              <!-- Left: Question buttons (vertical) -->
-              <div style="display: flex; flex-direction: column; gap: 12px;">
-                <button class="chart-btn active" onclick="switchChartTab('chart1', this)" style="background: var(--surface-2); border: 2px solid var(--brand-2); border-radius: var(--radius-sm); padding: 16px; text-align: left; cursor: pointer; transition: all 0.3s ease; width: 100%;">
-                  <div style="font-size: 11px; color: var(--brand-2); font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Overview</div>
-                  <div style="font-size: 13px; color: var(--text); line-height: 1.4; font-weight: 500;">Mode Comparison (Serial vs Binpacked vs Parallel)</div>
-                </button>
-                
-                <button class="chart-btn" onclick="switchChartTab('chart2', this)" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; text-align: left; cursor: pointer; transition: all 0.3s ease; width: 100%;">
-                  <div style="font-size: 11px; color: var(--brand-2); font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Question 1</div>
-                  <div style="font-size: 13px; color: var(--muted); line-height: 1.4; font-weight: 500;">What is tail latency by serving strategy?</div>
-                </button>
-                
-                <button class="chart-btn" onclick="switchChartTab('chart3', this)" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; text-align: left; cursor: pointer; transition: all 0.3s ease; width: 100%;">
-                  <div style="font-size: 11px; color: var(--brand-2); font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Question 2</div>
-                  <div style="font-size: 13px; color: var(--muted); line-height: 1.4; font-weight: 500;">How does tail move as the hot fraction changes?</div>
-                </button>
-                
-                <button class="chart-btn" onclick="switchChartTab('chart4', this)" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; text-align: left; cursor: pointer; transition: all 0.3s ease; width: 100%;">
-                  <div style="font-size: 11px; color: var(--brand-2); font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Question 3</div>
-                  <div style="font-size: 13px; color: var(--muted); line-height: 1.4; font-weight: 500;">How much fan-out do we remove (measured queries/request)?</div>
-                </button>
-                
-                <button class="chart-btn" onclick="switchChartTab('chart5', this)" style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; text-align: left; cursor: pointer; transition: all 0.3s ease; width: 100%;">
-                  <div style="font-size: 11px; color: var(--brand-2); font-weight: 700; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Question 4</div>
-                  <div style="font-size: 13px; color: var(--muted); line-height: 1.4; font-weight: 500;">How often does "≥1 slow lookup" happen per request?</div>
-                </button>
-              </div>
-
-              <!-- Right: Chart panels (full width) -->
-              <div class="chart-panel active" id="chart1">
-              <div class="chart-frame" style="margin-top: 0; cursor: pointer;">
-                <div class="chart-title">Mode Comparison: SLA Achievement</div>
-                <div class="chart-note">Quick overview comparing Serial, Binpacked, and Parallel modes at 0% and 10% hot traffic (worst-case cold scenarios).</div>
-                <div class="chart-content">
-                  <img class="chart-embed" 
-                    src="data:image/png;base64,{{CHART_EXEC_SLA_HEATMAP_BASE64}}"
-                    alt="Mode Comparison SLA Heatmap"
-                  />
+              <div class="tab-panels">
+                <div class="tab-panel is-active" id="chart1" role="tabpanel">
+                  <div class="chart-frame">
+                    <img src="data:image/png;base64,{{CHART_EXEC_SLA_HEATMAP_BASE64}}" alt="Mode Comparison SLA Heatmap" />
+                  </div>
+                  <div class="chart-note">Quick overview comparing Serial, Binpacked, and Parallel modes at 0% and 10% hot traffic (worst-case cold scenarios).</div>
                 </div>
-              </div>
-            </div>
-
-              <div class="chart-panel" id="chart2" style="display: none;">
-                <div class="chart-frame" style="margin-top: 0; cursor: pointer;">
-                  <div class="chart-title">Snapshot: tail latency by serving mode (P99 @ 0–20% hot)</div>
+                
+                <div class="tab-panel" id="chart2" role="tabpanel">
+                  <div class="chart-frame">
+                    <img src="data:image/png;base64,{{CHART_EXEC_P99_COLD_POINTS_BASE64}}" alt="Snapshot: tail latency by serving mode" />
+                  </div>
                   <div class="chart-note">Quick comparison of a cold-dominant regime where tail risk is highest.</div>
-                  <div class="chart-content">
-                    <img class="chart-embed" 
-                      src="data:image/png;base64,{{CHART_EXEC_P99_COLD_POINTS_BASE64}}"
-                      alt="Snapshot: tail latency by serving mode (P99 @ 0-20% hot)"
-                    />
-                  </div>
                 </div>
-              </div>
-
-              <div class="chart-panel" id="chart3" style="display: none;">
-                <div class="chart-frame" style="margin-top: 0; cursor: pointer;">
-                  <div class="chart-title">P99 latency vs hot traffic %</div>
+                
+                <div class="tab-panel" id="chart3" role="tabpanel">
+                  <div class="chart-frame">
+                    <img src="data:image/png;base64,{{CHART_EXEC_P99_CURVES_BASE64}}" alt="P99 latency vs hot traffic %" />
+                  </div>
                   <div class="chart-note">How the request tail shifts as cacheability improves (hot fraction rises).</div>
-                  <div class="chart-content">
-                    <img class="chart-embed" 
-                      src="data:image/png;base64,{{CHART_EXEC_P99_CURVES_BASE64}}"
-                      alt="P99 latency vs hot traffic %"
-                    />
-                  </div>
                 </div>
-              </div>
-
-              <div class="chart-panel" id="chart4" style="display: none;">
-                <div class="chart-frame" style="margin-top: 0; cursor: pointer;">
-                  <div class="chart-title">Queries per request by mode (measured)</div>
+                
+                <div class="tab-panel" id="chart4" role="tabpanel">
+                  <div class="chart-frame">
+                    <img src="data:image/png;base64,{{CHART_EXEC_QUERIES_PER_REQUEST_BASE64}}" alt="Queries per request by mode" />
+                  </div>
                   <div class="chart-note">Direct view of fan-out reduction from bin-packing (fewer round trips).</div>
-                  <div class="chart-content">
-                    <img class="chart-embed" 
-                      src="data:image/png;base64,{{CHART_EXEC_QUERIES_PER_REQUEST_BASE64}}"
-                      alt="Queries per request by mode"
-                    />
-                  </div>
                 </div>
-              </div>
-
-              <div class="chart-panel" id="chart5" style="display: none;">
-                <div class="chart-frame" style="margin-top: 0; cursor: pointer;">
-                  <div class="chart-title">Probability of ≥1 slow query per request (tail amplification)</div>
-                  <div class="chart-note">Connects per-query slowness to request-level tail under fan-out.</div>
-                  <div class="chart-content">
-                    <img class="chart-embed" 
-                      src="data:image/png;base64,{{CHART_EXEC_TAIL_AMPLIFICATION_BASE64}}"
-                      alt="Probability of ≥1 slow query per request"
-                    />
+                
+                <div class="tab-panel" id="chart5" role="tabpanel">
+                  <div class="chart-frame">
+                    <img src="data:image/png;base64,{{CHART_EXEC_TAIL_AMPLIFICATION_BASE64}}" alt="Tail amplification probability" />
                   </div>
+                  <div class="chart-note">Connects per-query slowness to request-level tail under fan-out.</div>
                 </div>
               </div>
             </div>
@@ -4606,6 +4563,29 @@ document.addEventListener('DOMContentLoaded', function() {
   document.querySelectorAll('.chart-embed').forEach(img => {
     img.addEventListener('click', function() {
       openChartModal(this.src);
+    });
+  });
+  
+  // Template B: Segmented tabs handler
+  document.querySelectorAll('.seg-tabs').forEach(tabset => {
+    tabset.addEventListener('click', (e) => {
+      const btn = e.target.closest('.seg-tab');
+      if (!btn) return;
+      
+      const card = tabset.closest('.chart-card');
+      const target = btn.getAttribute('data-tab');
+      if (!card || !target) return;
+      
+      // Update buttons
+      tabset.querySelectorAll('.seg-tab').forEach(b => {
+        b.classList.toggle('is-active', b === btn);
+        b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+      });
+      
+      // Update panels
+      card.querySelectorAll('.tab-panel').forEach(p => {
+        p.classList.toggle('is-active', p.id === target);
+      });
     });
   });
 });
