@@ -1786,7 +1786,7 @@
                   <div class="chart-frame">
                     <img src="data:image/png;base64,{{CHART_EXEC_SLA_HEATMAP_BASE64}}" alt="Mode Comparison SLA Heatmap" />
                   </div>
-                  <div class="chart-note">Quick overview comparing Serial, Binpacked, and Parallel modes at 0% and 10% hot traffic (worst-case cold scenarios).</div>
+                  <div class="chart-note">SLA achievement by mode at 0% and 10% hot (worst-case scenarios).</div>
                 </div>
                 
                 <div class="tab-panel" id="chart2" role="tabpanel">
@@ -1800,14 +1800,14 @@
                   <div class="chart-frame">
                     <img src="data:image/png;base64,{{CHART_EXEC_P99_CURVES_BASE64}}" alt="P99 latency vs hot traffic %" />
                   </div>
-                  <div class="chart-note">How the request tail shifts as cacheability improves (hot fraction rises).</div>
+                  <div class="chart-note">Tail latency improves as cache hit rate increases.</div>
                 </div>
                 
                 <div class="tab-panel" id="chart4" role="tabpanel">
                   <div class="chart-frame">
                     <img src="data:image/png;base64,{{CHART_EXEC_QUERIES_PER_REQUEST_BASE64}}" alt="Queries per request by mode" />
                   </div>
-                  <div class="chart-note">Direct view of fan-out reduction from bin-packing (fewer round trips).</div>
+                  <div class="chart-note">Fan-out reduction: 30 → 10 → 3 → 1 queries per request.</div>
                 </div>
                 
                 <div class="tab-panel" id="chart5" role="tabpanel">
