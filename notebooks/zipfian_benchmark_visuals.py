@@ -1551,11 +1551,15 @@ for idx, mode in enumerate(modes):
     if len(mode_data) > 0:
         p99_val = mode_data.iloc[0]['p99_ms']
         
+        # SLA-based coloring: green if meets 79ms target, gray if exceeds
+        SLA_TARGET = 79
+        bar_color = COLORS['sla_pass'] if p99_val <= SLA_TARGET else COLORS['cold']  # Green if pass, gray if fail
+        
         # Draw single bar for this mode
         ax.bar(idx, p99_val, width, 
-               label=mode_labels[mode], 
-               color=mode_colors[mode],
-               edgecolor='none',
+               color=bar_color,
+               edgecolor='#1E293B',
+               linewidth=1.5,
                alpha=0.95)
         
         # Add ONE label per bar
@@ -1580,9 +1584,14 @@ ax.set_xticks(x_positions)
 ax.set_xticklabels([mode_labels[m].replace('\n', ' ') for m in modes], fontsize=10, color='#64748B')
 ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
 
-# Move legend to top-right corner
-ax.legend(fontsize=10, loc='upper right', bbox_to_anchor=(0.98, 0.98), 
-          framealpha=0.95, edgecolor='#E2E8F0', fancybox=False, shadow=False)
+# Simple SLA legend (pass/fail color coding)
+from matplotlib.patches import Patch
+legend_elements = [
+    Patch(facecolor=COLORS['sla_pass'], edgecolor='#1E293B', linewidth=1.5, label='Meets 79ms target'),
+    Patch(facecolor=COLORS['cold'], edgecolor='#1E293B', linewidth=1.5, label='Exceeds target')
+]
+ax.legend(handles=legend_elements, fontsize=10, loc='upper right', 
+          framealpha=0.95, edgecolor='#E2E8F0', fancybox=False)
 
 ax.grid(True, alpha=0.15, axis='y', linewidth=1, color='#CBD5E1')
 ax.set_axisbelow(True)
