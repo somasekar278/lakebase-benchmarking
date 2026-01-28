@@ -403,14 +403,46 @@ display(comparison_df.style.set_properties(**{
 
 fig, ax = plt.subplots(figsize=(14, 7))
 
-# Build MODE_STYLES from centralized configuration
-MODE_STYLES = {
-    'serial': {'marker': 'o', 'linestyle': '-', 'color': MODE_COLORS['serial'], 'label': MODE_LABELS_SHORT['serial'] + ' (30 queries)', 'linewidth': 2.5},
-    'binpacked': {'marker': 's', 'linestyle': '-', 'color': MODE_COLORS['binpacked'], 'label': MODE_LABELS_SHORT['binpacked'] + ' (10 queries)', 'linewidth': 2.5},
-    'binpacked_parallel': {'marker': '^', 'linestyle': '-', 'color': MODE_COLORS['binpacked_parallel'], 'label': MODE_LABELS_SHORT['binpacked_parallel'] + ' (10 queries, 3 workers)', 'linewidth': 3},
-    'rpc_request_json': {'marker': 'd', 'linestyle': '-', 'color': MODE_COLORS['rpc_request_json'], 'label': MODE_LABELS_SHORT['rpc_request_json'] + ' (1 call)', 'linewidth': 3.5},
-    'rpc3_parallel': {'marker': 'P', 'linestyle': '-', 'color': MODE_COLORS['rpc3_parallel'], 'label': MODE_LABELS_SHORT['rpc3_parallel'] + ' (3 calls, parallel)', 'linewidth': 3.5}
-}
+# SLA-based coloring: check P99 in Production Reality (0-10% hot)
+SLA_TARGET = 79
+
+# Build MODE_STYLES with SLA-based colors
+MODE_STYLES = {}
+for mode in ['serial', 'binpacked', 'binpacked_parallel', 'rpc_request_json', 'rpc3_parallel']:
+    # Check if mode meets SLA in Production Reality (use 10% hot as reference)
+    mode_prod = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == 10)]
+    
+    if len(mode_prod) > 0:
+        p99_prod = mode_prod.iloc[0]['p99_ms']
+        # Green if meets SLA, gray if exceeds
+        line_color = COLORS['sla_pass'] if p99_prod <= SLA_TARGET else COLORS['cold']
+    else:
+        # Fallback to gray if no data
+        line_color = COLORS['cold']
+    
+    # Define marker and linewidth per mode
+    mode_markers = {
+        'serial': 'o',
+        'binpacked': 's',
+        'binpacked_parallel': '^',
+        'rpc_request_json': 'd',
+        'rpc3_parallel': 'P'
+    }
+    mode_linewidths = {
+        'serial': 2.5,
+        'binpacked': 2.5,
+        'binpacked_parallel': 3,
+        'rpc_request_json': 3.5,
+        'rpc3_parallel': 3.5
+    }
+    
+    MODE_STYLES[mode] = {
+        'marker': mode_markers[mode],
+        'linestyle': '-',
+        'color': line_color,
+        'label': MODE_LABELS_SHORT[mode] + f' ({["30 queries", "10 queries", "10 queries, 3 workers", "1 call", "3 calls, parallel"][["serial", "binpacked", "binpacked_parallel", "rpc_request_json", "rpc3_parallel"].index(mode)]})',
+        'linewidth': mode_linewidths[mode]
+    }
 
 for mode, style in MODE_STYLES.items():
     mode_df = df[df['fetch_mode'] == mode].sort_values('hot_traffic_pct', ascending=False)
@@ -486,8 +518,11 @@ for mode, style in MODE_STYLES.items():
             )
 
 # Add legend after all elements are drawn (positioned on left where there's space)
+# Note: Line colors indicate SLA status (green = meets 79ms, gray = exceeds)
 ax.legend(fontsize=10, loc='upper left', framealpha=0.95, edgecolor='#E2E8F0', 
-         fancybox=False, bbox_to_anchor=(0.02, 0.98))
+         fancybox=False, bbox_to_anchor=(0.02, 0.98),
+         title='Line color: Green = meets 79ms target | Gray = exceeds target',
+         title_fontsize=8)
 
 # Clean up spines
 for spine in ax.spines.values():
