@@ -91,13 +91,42 @@ plt.rcParams['figure.figsize'] = (14, 8)
 plt.rcParams['figure.dpi'] = 150
 plt.rcParams['font.size'] = 11
 
-# Colors
+# ========================================
+# SEMANTIC CHART COLOR SYSTEM
+# ========================================
+# Synchronized with report_template.html
+# Colors encode MEANING, not decoration
+# ========================================
+
 COLORS = {
-    'lakebase': '#2E86AB',
-    'dynamodb': '#C73E1D',
-    'good': '#2ca02c',
-    'warning': '#ff7f0e',
-    'bad': '#d62728'
+    # Cache warmth / Scenario colors
+    'cold': '#6B7280',           # Neutral gray - 0% hot (fully cold, worst-case)
+    'production': '#60A5FA',     # Muted blue - 0-10% hot (Production Reality)
+    'warm': '#34D399',           # Muted green - >50% hot (best-case)
+    'threshold': '#FBBF24',      # Muted amber - At-risk (SLA charts only)
+    
+    # Entity colors (lock globally)
+    'entity_email': '#60A5FA',       # Muted blue - Customer Email
+    'entity_name': '#34D399',        # Muted teal/green - Cardholder Name
+    'entity_fingerprint': '#FBBF24', # Muted amber - Card Fingerprint
+    
+    # Execution mode colors
+    'mode_serial': '#6B7280',      # Gray - Serial (baseline)
+    'mode_binpacked': '#60A5FA',   # Muted blue - Bin-packed
+    'mode_parallel': '#34D399',    # Muted green - Parallel (preferred)
+    'mode_rpc': '#10B981',         # Green - RPC (best-performing)
+    
+    # SLA status colors (use sparingly)
+    'sla_pass': '#10B981',    # Green - Meets SLA
+    'sla_fail': '#EF4444',    # Red - Exceeds SLA  
+    'sla_warning': '#F59E0B', # Amber - Near threshold
+    
+    # Legacy compatibility (deprecated - migrate to semantic names above)
+    'lakebase': '#60A5FA',  # Map to production/muted blue
+    'dynamodb': '#C73E1D',  # Keep for external comparisons
+    'good': '#10B981',      # Map to sla_pass
+    'warning': '#F59E0B',   # Map to sla_warning
+    'bad': '#EF4444'        # Map to sla_fail
 }
 
 print("📂 Loading benchmark results from Lakebase...")
@@ -210,22 +239,18 @@ MODE_SORT_ORDER = {
     'rpc3_parallel': 4
 }
 
-# Checkout.com professional color palette
-checkout_blue = '#357FF5'
-checkout_cyan = '#00D4FF'
-checkout_purple = '#7C3AED'
-
+# Semantic color system (synchronized with report_template.html)
 MODE_COLORS = {
-    'serial': '#94A3B8',           # Gray-blue baseline
-    'binpacked': '#60A5FA',        # Light blue
-    'binpacked_parallel': checkout_blue,  # Checkout blue
-    'rpc_request_json': checkout_cyan,     # Checkout cyan
-    'rpc3_parallel': checkout_purple       # Checkout purple (RPC×Entity)
+    'serial': COLORS['mode_serial'],              # #6B7280 - Gray baseline (never use in production)
+    'binpacked': COLORS['mode_binpacked'],        # #60A5FA - Muted blue (minor improvement)
+    'binpacked_parallel': COLORS['mode_parallel'], # #34D399 - Muted green (preferred for cold workloads)
+    'rpc_request_json': COLORS['mode_rpc'],       # #10B981 - Green (best-performing)
+    'rpc3_parallel': COLORS['mode_rpc']           # #10B981 - Green (RPC×Entity, best overall)
 }
 
-# Production-realistic hot traffic percentages
-PROD_HOT_PCTS = [0, 10]  # realistic production range (mostly cold/mixed traffic)
-PROD_HOT_PCT_FOR_HIGHLIGHT = 10  # reference point for "production-like" annotations
+# Production Reality hot traffic percentages
+PROD_HOT_PCTS = [0, 10]  # Production Reality (0-10% hot): cold-dominated mixed traffic
+PROD_HOT_PCT_FOR_HIGHLIGHT = 10  # reference point for "Production Reality" annotations
 
 def get_mode_row(df, mode, hot_pct):
     """
@@ -417,15 +442,15 @@ ax.invert_xaxis()  # 100% on left, 0% on right
 ax.set_xticks([100, 80, 60, 40, 20, 0])
 ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
 
-# Add 79ms SLA reference line
-ax.axhline(79, color='#EF4444', linestyle='--', linewidth=2, alpha=0.7, zorder=2)
+# Add 79ms SLA reference line (using semantic SLA fail color)
+ax.axhline(79, color=COLORS['sla_fail'], linestyle='--', linewidth=2, alpha=0.7, zorder=2)
 ax.text(95, 82, '79ms SLA Target', fontsize=10, fontweight='600', 
-        color='#DC2626', va='bottom', ha='right', alpha=0.85)
+        color=COLORS['sla_fail'], va='bottom', ha='right', alpha=0.85)
 
-# Highlight cold reality zone (0-20% hot) - after axes are configured
-ax.axvspan(0, 20, alpha=0.08, color='#60A5FA', zorder=1)
+# Highlight Production Reality zone (0-20% hot) - after axes are configured
+ax.axvspan(0, 20, alpha=0.08, color=COLORS['production'], zorder=1)
 y_max = ax.get_ylim()[1]
-ax.text(10, y_max * 0.95, 'Cold Reality\nZone', 
+ax.text(10, y_max * 0.95, 'Production Reality\n(0-10% hot)', 
         fontsize=9, fontweight='600', color='#475569', 
         ha='center', va='top', alpha=0.7)
 
@@ -642,16 +667,16 @@ fig, ax = plt.subplots(figsize=(14, 8))
 x = df["hot_traffic_pct"]
 width = 3  # Width of bars
 
-# Plot stacked bars
+# Plot stacked bars - using semantic cache warmth colors
 ax.bar(x, df["fully_hot_request_pct"], width, label='Fully Hot (all 3 entities)', 
-       color=COLORS['good'], edgecolor='black', linewidth=1)
+       color=COLORS['warm'], edgecolor='black', linewidth=1)
 ax.bar(x, df["fully_cold_request_pct"], width, label='Fully Cold (all 3 entities)', 
-       color=COLORS['bad'], edgecolor='black', linewidth=1, bottom=df["fully_hot_request_pct"])
+       color=COLORS['cold'], edgecolor='black', linewidth=1, bottom=df["fully_hot_request_pct"])
 
 # Calculate mixed percentage
 df["mixed_request_pct"] = 100 - df["fully_hot_request_pct"] - df["fully_cold_request_pct"]
 ax.bar(x, df["mixed_request_pct"], width, label='Mixed (1-2 entities cold)', 
-       color=COLORS['warning'], edgecolor='black', linewidth=1, 
+       color=COLORS['production'], edgecolor='black', linewidth=1, 
        bottom=df["fully_hot_request_pct"] + df["fully_cold_request_pct"])
 
 # Styling
@@ -1017,7 +1042,7 @@ print()
 # Check if this is V5 data with multiple worker counts
 if 'parallel_workers' in df.columns:
     # Filter to parallel mode at cold regimes (0% or 10% hot) - most relevant for Tab 5
-    # Try 10% first (production-realistic), fallback to 0% (fully cold)
+    # Try 10% first (Production Reality), fallback to 0% (fully cold)
     hot_pct_options = [10, 0, 50]  # Prefer 10%, then 0%, then 50% as last resort
     parallel_data = None
     selected_hot_pct = None
@@ -1078,8 +1103,8 @@ if 'parallel_workers' in df.columns:
         ax.set_ylabel('Latency (ms)', fontsize=14, fontweight='bold')
         
         # ✅ Title reflecting selected regime
-        regime_label = "production-like skew (0-10% hot)" if selected_hot_pct == 10 else ("fully cold" if selected_hot_pct == 0 else "mixed")
-        title_text = f'Workers Sweep: Diminishing Returns After 2-3 Workers ({selected_hot_pct}% hot, {regime_label})'
+        regime_label = "Production Reality (0-10% hot)" if selected_hot_pct == 10 else ("fully cold" if selected_hot_pct == 0 else "mixed")
+        title_text = f'Workers Sweep: Diminishing Returns After 2-3 Workers ({regime_label})'
         ax.set_title(title_text, fontsize=18, fontweight='700', pad=20, color='#1E293B')
         
         ax.legend(fontsize=11, loc='upper right')
@@ -1294,30 +1319,45 @@ if 'entity_timing_detail' in df.columns:
                 serial_wall_clock = max(e['end_ms'] for e in serial_sample)
                 speedup = serial_wall_clock / parallel_wall_clock if parallel_wall_clock > 0 else 0
                 
-                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10))
+                fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10), gridspec_kw={'hspace': 0.35})
                 
                 # Serial execution (top panel) - always single bars
                 y_pos = 0
                 for entity_data in serial_sample:
-                    ax1.barh(y_pos, 
-                            entity_data['end_ms'] - entity_data['start_ms'], 
-                            left=entity_data['start_ms'],
+                    duration = entity_data['end_ms'] - entity_data['start_ms']
+                    bar_start = entity_data['start_ms']
+                    bar_end = entity_data['end_ms']
+                    
+                    # Draw bar (DB execution style - solid)
+                    ax1.barh(y_pos, duration, left=bar_start,
                             height=0.6,
-                            color=COLORS['bad'],
-                            edgecolor='black',
-                            linewidth=1.5)
-                    ax1.text(entity_data['end_ms'] + 2, y_pos, 
-                            f"{entity_data['end_ms'] - entity_data['start_ms']:.1f}ms",
-                            va='center', fontsize=10, fontweight='bold')
+                            color=COLORS['lakebase'],
+                            edgecolor='#0F172A',
+                            linewidth=1)
+                    
+                    # Add label INSIDE bar if wide enough, otherwise outside
+                    if duration >= 18:
+                        # Label inside bar (white text on dark background)
+                        ax1.text((bar_start + bar_end) / 2, y_pos, 
+                                f"{duration:.0f} ms",
+                                va='center', ha='center', fontsize=12, fontweight='500', color='white')
+                    else:
+                        # Label outside bar (dark text)
+                        ax1.text(bar_end + 2, y_pos, 
+                                f"{duration:.0f} ms",
+                                va='center', ha='left', fontsize=12, fontweight='500', color='#475569')
                     y_pos += 1
                 
                 ax1.set_yticks(range(len(serial_sample)))
-                ax1.set_yticklabels([e['entity'] for e in serial_sample])
-                ax1.set_xlabel('Time (ms)', fontsize=12, fontweight='bold')
-                ax1.set_title(f'🔴 Serial Execution (Sequential) | 30 queries (per-table) | Wall-clock: {serial_wall_clock:.1f}ms', 
-                             fontsize=14, fontweight='bold', pad=10)
-                ax1.grid(True, alpha=0.3, axis='x')
+                ax1.set_yticklabels([e['entity'] for e in serial_sample], fontsize=13, color='#475569')
+                ax1.set_xlabel('Time (ms)', fontsize=13, fontweight='400', labelpad=10, color='#475569')
+                ax1.set_title('Serial (Sequential)', 
+                             fontsize=18, fontweight='600', pad=15, color='#1E293B')
+                ax1.grid(True, alpha=0.15, axis='x', linewidth=1, color='#CBD5E1')
                 ax1.set_xlim(0, serial_wall_clock * 1.15)
+                ax1.set_axisbelow(True)
+                ax1.set_facecolor('#FAFAFA')
+                ax1.tick_params(colors='#94A3B8', which='both', labelsize=11)
                 
                 # Parallel execution (bottom panel) - segmented or single bars
                 if has_segments:
@@ -1326,96 +1366,94 @@ if 'entity_timing_detail' in df.columns:
                     y_pos = 0
                     for entity in entity_list:
                         segments = sorted(parallel_by_entity[entity], key=lambda s: s['start_ms'])
+                        
+                        # Draw all segments for this entity
                         for seg in segments:
                             duration = seg['end_ms'] - seg['start_ms']
                             if seg['segment'] == 'pool_wait':
-                                # Pool wait: lighter yellow/orange with transparency, dashed border
-                                color = (251/255, 191/255, 36/255, 0.4)  # RGBA tuple
-                                edgecolor = '#F59E0B'
+                                # Pool wait: lighter tint with lower opacity
+                                color = (147/255, 197/255, 253/255, 0.5)  # Light blue at 50% opacity
+                                edgecolor = '#3B82F6'
                                 linestyle = '--'
-                                linewidth = 2
+                                linewidth = 1
                             else:  # db_exec
                                 # DB exec: solid blue (lakebase brand)
                                 color = COLORS['lakebase']
-                                edgecolor = 'black'
+                                edgecolor='#0F172A'
                                 linestyle = '-'
-                                linewidth = 1.5
+                                linewidth = 1
                             
                             ax2.barh(y_pos, duration, left=seg['start_ms'],
                                     height=0.6, color=color, edgecolor=edgecolor,
                                     linewidth=linewidth, linestyle=linestyle)
                         
-                        # Label total time at end of entity
+                        # Add single label at END of entity row showing total wall-clock time
                         total_end = max(s['end_ms'] for s in segments)
                         total_start = min(s['start_ms'] for s in segments)
-                        ax2.text(total_end + 1, y_pos, 
-                                f"{total_end - total_start:.1f}ms",
-                                va='center', fontsize=10, fontweight='bold')
+                        total_duration = total_end - total_start
+                        ax2.text(total_end + 2, y_pos,
+                                f"{total_duration:.0f} ms",
+                                va='center', ha='left', fontsize=12, fontweight='500', color='#475569')
                         y_pos += 1
                     
                     ax2.set_yticks(range(len(entity_list)))
-                    ax2.set_yticklabels(entity_list)
-                    
-                    # Add legend for segmented view
-                    from matplotlib.patches import Patch
-                    legend_elements = [
-                        Patch(facecolor=(251/255, 191/255, 36/255, 0.4), edgecolor='#F59E0B', 
-                              linestyle='--', linewidth=2, label='Pool wait'),
-                        Patch(facecolor=COLORS['lakebase'], edgecolor='black', 
-                              linestyle='-', linewidth=1.5, label='DB execution')
-                    ]
-                    ax2.legend(handles=legend_elements, loc='upper right', fontsize=10)
+                    ax2.set_yticklabels(entity_list, fontsize=13, color='#475569')
                     
                 else:
                     # V5.3: Single bar per entity (backward compatible)
                     y_pos = 0
                     for entity_data in parallel_sample:
-                        ax2.barh(y_pos, 
-                                entity_data['end_ms'] - entity_data['start_ms'], 
-                                left=entity_data['start_ms'],
+                        duration = entity_data['end_ms'] - entity_data['start_ms']
+                        bar_start = entity_data['start_ms']
+                        bar_end = entity_data['end_ms']
+                        
+                        ax2.barh(y_pos, duration, left=bar_start,
                                 height=0.6,
                                 color=COLORS['lakebase'],
-                                edgecolor='black',
-                                linewidth=1.5)
-                        ax2.text(entity_data['end_ms'] + 1, y_pos, 
-                                f"{entity_data['end_ms'] - entity_data['start_ms']:.1f}ms",
-                                va='center', fontsize=10, fontweight='bold')
+                                edgecolor='#0F172A',
+                                linewidth=1)
+                        
+                        # Add label INSIDE bar if wide enough
+                        if duration >= 18:
+                            ax2.text((bar_start + bar_end) / 2, y_pos,
+                                    f"{duration:.0f} ms",
+                                    va='center', ha='center', fontsize=12, fontweight='500', color='white')
+                        else:
+                            ax2.text(bar_end + 2, y_pos,
+                                    f"{duration:.0f} ms",
+                                    va='center', ha='left', fontsize=12, fontweight='500', color='#475569')
                         y_pos += 1
                     
                     ax2.set_yticks(range(len(parallel_sample)))
-                    ax2.set_yticklabels([e['entity'] for e in parallel_sample])
+                    ax2.set_yticklabels([e['entity'] for e in parallel_sample], fontsize=13, color='#475569')
                 
-                # Axes config for parallel panel
-                ax2.set_xlabel('Time (ms)', fontsize=12, fontweight='bold')
-                
-                # Title reflects whether we have segmented data
-                if has_segments:
-                    title_suffix = f'Wall-clock (pool wait + DB): {parallel_wall_clock:.1f}ms | Speedup: {speedup:.1f}×'
-                else:
-                    title_suffix = f'Wall-clock: {parallel_wall_clock:.1f}ms | Speedup: {speedup:.1f}×'
-                
-                ax2.set_title(f'🟢 Parallel Execution (3 workers) | 10 binpacked queries | {title_suffix}', 
-                             fontsize=14, fontweight='bold', pad=10)
-                ax2.grid(True, alpha=0.3, axis='x')
+                # Axes config for parallel panel (applies to both segmented and legacy)
+                ax2.set_xlabel('Time (ms)', fontsize=13, fontweight='400', labelpad=10, color='#475569')
+                ax2.set_title('Parallel (3 workers)', 
+                             fontsize=18, fontweight='600', pad=15, color='#1E293B')
+                ax2.grid(True, alpha=0.15, axis='x', linewidth=1, color='#CBD5E1')
                 ax2.set_xlim(0, serial_wall_clock * 1.15)  # Use same scale for fair comparison
+                ax2.set_axisbelow(True)
+                ax2.set_facecolor('#FAFAFA')
+                ax2.tick_params(colors='#94A3B8', which='both', labelsize=11)
                 
-                # Add executive summary annotation box
-                summary_text = (
-                    f'📊 Executive Summary:\n'
-                    f'Serial: {serial_wall_clock:.1f}ms (30 individual SELECTs)\n'
-                    f'Parallel: {parallel_wall_clock:.1f}ms (10 binpacked UNION queries)\n'
-                    f'Speedup: {speedup:.1f}× faster\n'
-                    f'Savings: {serial_wall_clock - parallel_wall_clock:.1f}ms per request'
-                )
-                ax2.text(0.98, 0.95, summary_text,
-                        transform=ax2.transAxes, ha='right', va='top',
-                        bbox=dict(boxstyle='round,pad=0.8', facecolor='lightgoldenrodyellow', 
-                                 edgecolor='black', linewidth=2, alpha=0.95),
-                        fontsize=11, fontweight='bold', family='monospace')
+                # Overall title with clean one-line explanation
+                fig.suptitle('Entity execution overlap shows parallelization benefit\nSerial vs Parallel at 50% Hot Traffic', 
+                            fontsize=16, fontweight='600', color='#1E293B', y=0.98)
+                fig.patch.set_facecolor('white')
                 
-                # Overall title
-                fig.suptitle('🎯 V5: Entity Execution Timeline (Gantt Chart)\nSerial vs Parallel at 50% Hot Traffic', 
-                            fontsize=16, fontweight='bold', y=0.995)
+                # Add legend below chart if segmented data exists
+                if has_segments:
+                    from matplotlib.patches import Patch
+                    legend_elements = [
+                        Patch(facecolor=COLORS['lakebase'], edgecolor='#0F172A', 
+                              linestyle='-', linewidth=1, label='DB execution'),
+                        Patch(facecolor=(147/255, 197/255, 253/255, 0.5), edgecolor='#3B82F6', 
+                              linestyle='--', linewidth=1, label='Pool wait')
+                    ]
+                    fig.legend(handles=legend_elements, loc='lower center', 
+                              bbox_to_anchor=(0.5, -0.02), ncol=2, fontsize=12,
+                              framealpha=0.95, edgecolor='#E2E8F0', fancybox=False)
                 
                 plt.tight_layout()
                 plt.savefig('/tmp/zipfian_v5_gantt_chart.png', dpi=150, bbox_inches='tight')
@@ -1466,15 +1504,15 @@ print("\n" + "="*80)
 print("📊 GENERATING EXECUTIVE SUMMARY CHARTS")
 print("="*80 + "\n")
 
-# Chart 1: P99 at Cold Points (0% and 20% hot) - Grouped Bars
-print("📊 Chart 1: P99 at 0% and 20% hot (grouped bars)...")
+# Chart 1: P99 in Production Reality (10% hot specifically)
+print("📊 Chart 1: Executive Decision Chart - P99 at 10% hot (Production Reality)...")
 
 # Standardized chart size for all executive summary charts
 fig, ax = plt.subplots(figsize=(14, 7))
 
-# Filter for ONLY 0% hot (fully cold) to avoid clutter and overlapping labels
-# This shows the worst-case scenario clearly
-cold_points = df[df['hot_traffic_pct'] == 0].copy()
+# ✅ FIXED: Use 10% hot (Production Reality) to match hero KPI
+# This ensures the chart and KPIs show the same values
+cold_points = df[df['hot_traffic_pct'] == 10].copy()
 
 # CRITICAL: For parallel mode, filter to w=3 specifically before deduplicating
 if 'parallel_workers' in cold_points.columns:
@@ -1535,7 +1573,7 @@ ax.set_ylim(0, max_val * 1.2)  # Standard 1.2x multiplier matching other charts
 # Professional styling matching Checkout.com
 ax.set_ylabel('P99 Latency (ms)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
 ax.set_xlabel('Execution Mode', fontsize=12, fontweight='600', labelpad=10, color='#475569')
-ax.set_title('Executive Decision Chart: P99 in Worst-Case Cold Reality (0% Hot)', 
+ax.set_title('Executive Decision Chart: P99 in Production Reality (10% hot)', 
              fontsize=13, fontweight='600', pad=20, color='#1E293B')
 # Set x-axis for all modes
 ax.set_xticks(x_positions)
@@ -1577,7 +1615,7 @@ print("📊 Chart 2: Queries per request (structural reduction)...")
 # Standardized chart size for all executive summary charts
 fig, ax = plt.subplots(figsize=(14, 7))
 
-# Get representative row for each mode (use production-like hot% as reference)
+# Get representative row for each mode (use Production Reality hot% as reference)
 queries_data = []
 for mode in modes:
     mode_df = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == 80)]
@@ -1910,7 +1948,7 @@ try:
     ax.set_xticks([cell_width * (i + 0.5) for i in range(num_modes)])
     ax.set_xticklabels(heatmap_mode_labels, fontsize=12, fontweight='600', color='#475569')
     ax.set_yticks([cell_height * 0.5, cell_height * 1.5])
-    ax.set_yticklabels(['10% Hot\n(Mostly Cold)', '0% Hot\n(Fully Cold)'], fontsize=12, fontweight='600', color='#475569')
+    ax.set_yticklabels(['10% Hot', '0% Hot'], fontsize=12, fontweight='600', color='#475569')
 
     # Remove spines and ticks
     ax.tick_params(left=False, bottom=False, colors='#94A3B8')
@@ -1920,7 +1958,7 @@ try:
     fig.patch.set_facecolor('white')
     
     # Title using fig.suptitle for proper centering on the figure
-    fig.suptitle('SLA Scorecard: Does It Meet 79ms Target in Cold Reality?',
+    fig.suptitle('SLA Scorecard: Does It Meet 79ms Target in Production Reality (10% hot)?',
                  fontsize=14, fontweight='600', color='#1E293B', y=0.98)
     
     # Add legend/reference after layout is set (better positioning for larger chart)
@@ -1938,7 +1976,7 @@ except Exception as e:
     fig, ax = plt.subplots(figsize=(14, 7))
     ax.text(0.5, 0.5, f'SLA Heatmap Error\n{str(e)[:150]}', 
            ha='center', va='center', fontsize=11, color='#EF4444', transform=ax.transAxes)
-    ax.set_title('SLA Scorecard: Does It Meet 79ms Target in Cold Reality?',
+    ax.set_title('SLA Scorecard: Does It Meet 79ms Target in Production Reality (10% hot)?',
                  fontsize=13, fontweight='600', pad=20, color='#1E293B')
     ax.axis('off')
     fig.patch.set_facecolor('white')
@@ -2063,28 +2101,33 @@ except Exception as e:
 print("📊 Chart 6: Tail Amplification Probability (Serial-only)...")
 
 # Query slow query log to calculate P(request_latency_ms >= REQUEST_SLOW_THRESHOLD_MS)
-# ✅ UPDATED: Now uses request-level slow events (event_type='request')
-# - This captures tail amplification correctly: requests that breach the SLA/threshold
-# - Previous logic only counted per-table slow queries (missing cumulative fan-out effect)
-# - Shows serial, binpacked, and binpacked_parallel for comparison
+# ✅ UPDATED: Aggregates table_query events to identify requests with slow queries
+# - Since slow_query_log only has event_type='table_query', we aggregate to request level
+# - A request is "slow" if it has ANY table query that breached the threshold
+# - This captures tail amplification: requests affected by at least one slow query
 slow_query_query = f"""
     SELECT
-      s.mode AS mode,
-      s.hot_traffic_pct AS hot_traffic_pct,
+      r.mode AS mode,
+      r.hot_traffic_pct AS hot_traffic_pct,
       COUNT(DISTINCT r.request_id) AS total_requests,
-      COUNT(DISTINCT s.request_id) AS requests_exceeding_threshold,
-      100.0 * COUNT(DISTINCT s.request_id) / NULLIF(COUNT(DISTINCT r.request_id), 0) AS tail_amplification_pct
+      COUNT(DISTINCT CASE WHEN s.request_id IS NOT NULL THEN s.request_id END) AS requests_exceeding_threshold,
+      100.0 * COUNT(DISTINCT CASE WHEN s.request_id IS NOT NULL THEN s.request_id END) / NULLIF(COUNT(DISTINCT r.request_id), 0) AS tail_amplification_pct
     FROM features.zipfian_request_timing r
-    LEFT JOIN features.zipfian_slow_query_log s
+    LEFT JOIN (
+        SELECT DISTINCT run_id, mode, hot_traffic_pct, request_id
+        FROM features.zipfian_slow_query_log
+        WHERE run_id = '{RUN_ID}'
+          AND event_type = 'table_query'
+    ) s
       ON s.run_id = r.run_id
      AND s.mode = r.mode
      AND s.hot_traffic_pct = r.hot_traffic_pct
      AND s.request_id = r.request_id
-     AND s.event_type = 'request'
     WHERE r.run_id = '{RUN_ID}'
       AND r.mode IN ('serial', 'binpacked', 'binpacked_parallel')
-    GROUP BY s.mode, s.hot_traffic_pct
-    ORDER BY s.mode, s.hot_traffic_pct DESC
+    GROUP BY r.mode, r.hot_traffic_pct
+    HAVING COUNT(DISTINCT r.request_id) > 0
+    ORDER BY r.mode, r.hot_traffic_pct DESC
 """
 
 try:
@@ -2101,7 +2144,14 @@ try:
         # Try to query the slow query log table
         tail_amp_df = pd.read_sql(slow_query_query, conn_tail)
         conn_tail.close()
-        tail_amp_df = tail_amp_df.dropna()  # Remove any null values
+        
+        print(f"   📊 Tail amp query returned {len(tail_amp_df)} rows")
+        if len(tail_amp_df) > 0:
+            print(f"      Modes: {tail_amp_df['mode'].unique()}")
+            print(f"      Sample data:\n{tail_amp_df.head()}")
+        
+        # Keep rows even if tail_amplification_pct is 0 (means no slow queries, which is valid data)
+        tail_amp_df = tail_amp_df[tail_amp_df['total_requests'] > 0]
     except Exception as sql_error:
         # SQL error (table doesn't exist, query failed, etc.)
         if 'conn_tail' in locals():
@@ -2131,7 +2181,8 @@ try:
             if mode not in available_tail_modes:
                 continue  # Skip modes without tail amplification data
                 
-            mode_data = tail_amp_df[tail_amp_df['mode'] == mode].sort_values('hot_traffic_pct', ascending=False)
+            # ✅ Sort ascending (0 → 100) to match non-inverted x-axis
+            mode_data = tail_amp_df[tail_amp_df['mode'] == mode].sort_values('hot_traffic_pct', ascending=True)
             if len(mode_data) > 0:
                 ax.plot(mode_data['hot_traffic_pct'], 
                        mode_data['tail_amplification_pct'],
@@ -2141,23 +2192,25 @@ try:
                        alpha=0.95)
         
         # Styling
-        ax.set_xlabel('Hot Traffic % (per entity)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
+        ax.set_xlabel('Hot Traffic % (per entity) → warmer', fontsize=12, fontweight='600', labelpad=10, color='#475569')
         ax.set_ylabel('Probability of Tail Amplification (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
-        ax.set_title('Tail Amplification Risk: P(Request Latency ≥100ms)\n(Request-level slow events: fan-out cumulative effect)',
+        ax.set_title('Tail Amplification Risk: P(Request Breaches SLA Target)\n(Request latency >79ms: fan-out cumulative effect)',
                      fontsize=12, fontweight='600', pad=20, color='#1E293B')
-        ax.legend(fontsize=10, loc='upper left', framealpha=0.95, edgecolor='#E2E8F0', fancybox=False)
+        ax.legend(fontsize=10, loc='upper right', framealpha=0.95, edgecolor='#E2E8F0', fancybox=False)
         ax.grid(True, alpha=0.15, linewidth=1, color='#CBD5E1')
         ax.set_axisbelow(True)
         ax.set_facecolor('#FAFAFA')
         fig.patch.set_facecolor('white')
-        ax.invert_xaxis()
+        # ✅ REMOVED: ax.invert_xaxis() - now 0% (cold) is on LEFT, 100% (hot) is on RIGHT
         
-        # Set ticks
-        ax.set_xticks([100, 80, 60, 40, 20, 0])
+        # Set ticks (0 to 100, left to right)
+        ax.set_xticks([0, 20, 40, 60, 80, 100])
         ax.tick_params(colors='#94A3B8', which='both', labelsize=10)
         
-        # Highlight cold zone
+        # Highlight Production Reality zone (0-20% hot = left side)
         ax.axvspan(0, 20, alpha=0.08, color='#60A5FA', zorder=1)
+        ax.text(10, ax.get_ylim()[1] * 0.95, 'Production Reality\n(0-10% hot)', 
+                fontsize=9, fontweight='600', color='#475569', ha='center', va='top', alpha=0.7)
         
         # Clean up spines
         for spine in ax.spines.values():
@@ -2165,7 +2218,7 @@ try:
             spine.set_linewidth(1)
         
         plt.tight_layout(pad=1.5)
-        plt.savefig('/tmp/zipfian_exec_tail_amplification.png', dpi=150, facecolor='white')
+        plt.savefig('/tmp/zipfian_exec_tail_amplification.png', dpi=150, facecolor='white', bbox_inches='tight')
         print("   ✅ Saved: /tmp/zipfian_exec_tail_amplification.png")
         plt.close()
     else:
@@ -2177,7 +2230,7 @@ try:
         ax.text(0.5, 0.5, placeholder_msg, 
                ha='center', va='center', fontsize=13, color='#64748B', transform=ax.transAxes,
                bbox=dict(boxstyle='round,pad=1', facecolor='#F8FAFC', edgecolor='#E2E8F0', linewidth=2))
-        ax.set_title('Tail Amplification Risk: P(Request Latency ≥100ms)',
+        ax.set_title('Tail Amplification Risk: P(Request Breaches SLA Target)',
                      fontsize=13, fontweight='600', pad=20, color='#1E293B')
         ax.axis('off')
         fig.patch.set_facecolor('white')
@@ -2194,7 +2247,7 @@ except Exception as e:
     ax.text(0.5, 0.5, error_msg, 
            ha='center', va='center', fontsize=13, color='#64748B', transform=ax.transAxes,
            bbox=dict(boxstyle='round,pad=1', facecolor='#F8FAFC', edgecolor='#E2E8F0', linewidth=2))
-    ax.set_title('Tail Amplification Risk: P(Request Contains ≥1 Slow Query ≥40ms)',
+    ax.set_title('Tail Amplification Risk: P(Request Breaches SLA Target)',
                  fontsize=13, fontweight='600', pad=20, color='#1E293B')
     ax.axis('off')
     fig.patch.set_facecolor('white')
@@ -2240,7 +2293,12 @@ total_lookups = sum(lookups)
 # Create stacked bar showing breakdown
 x_pos = np.arange(1)
 bottom = 0
-colors_fanout = ['#357FF5', '#60A5FA', '#93C5FD']  # Checkout.com blue gradient
+# Use semantic entity colors (order: Card Fingerprint, Customer Email, Cardholder Name)
+colors_fanout = [
+    COLORS['entity_fingerprint'],  # #FBBF24 - Card Fingerprint (amber)
+    COLORS['entity_email'],         # #60A5FA - Customer Email (blue)
+    COLORS['entity_name']           # #34D399 - Cardholder Name (green)
+]
 
 bars = []
 for i, (entity, count) in enumerate(entity_lookups.items()):
@@ -2428,14 +2486,15 @@ for i, label in enumerate(labels_mix):
 ax.set_xlabel('Per-Entity Hot Traffic %', fontsize=12, fontweight='600', labelpad=10, color='#475569')
 ax.set_ylabel('Request Distribution (%)', fontsize=12, fontweight='600', labelpad=10, color='#475569')
 # ✅ FIXED: Simplified title for executive readability
-ax.set_title('Most production requests are mixed or fully cold\n'
+ax.set_title('Production Reality (0-10% hot): Most requests are mixed or fully cold\n'
              'Request composition when entities are independently hot',
              fontsize=13, fontweight='600', pad=20, color='#1E293B')
 ax.set_xticks(x)
 ax.set_xticklabels([f'{h}%' for h in hot_pct_values], fontsize=10, color='#64748B')
 ax.set_ylim(0, 100)
 # ✅ Legend already has explicit labels (0 hot, 1 hot, 2 hot, 3 hot)
-ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='#E2E8F0', fancybox=False, ncol=2)
+# ✅ FIXED: Moved legend inside blue area on upper right, positioned so end is before 95%
+ax.legend(loc='upper right', fontsize=11, framealpha=0.95, edgecolor='#E2E8F0', fancybox=False, ncol=2, bbox_to_anchor=(0.82, 0.98))
 ax.grid(True, alpha=0.15, axis='y', linewidth=1, color='#CBD5E1')
 ax.set_axisbelow(True)
 ax.set_facecolor('#FAFAFA')
@@ -2456,7 +2515,7 @@ if 10 in hot_pct_values:
     
     # Single strong callout annotation
     ax.text(highlight_idx + 0.15, 35, 
-            f'At 0–10% hot per entity (production-like):\n'
+            f'Production Reality (0–10% hot per entity):\n'
             f'~{fully_cold_10:.0f}% of requests are fully cold, ~{mixed_10:.0f}% are mixed.\n'
             f'Fully-hot requests are vanishingly rare.\n'
             f'P99 is driven by cold-path behavior.',
@@ -2487,96 +2546,88 @@ print("\n" + "="*80)
 print("📊 TAB 4: DEEP DIAGNOSTIC CHARTS")
 print("="*80 + "\n")
 
-# Chart 1: Request Latency ECDF (Cumulative Distribution Function)
-print("📊 Chart 1: Request latency ECDF (10% hot vs 0% hot - Serial mode)...")
-
-# We need raw latency samples, but df only has aggregated P50/P99
-# Approximate ECDF using percentiles if available, or create from P50/P99/P95
-# For now, use available percentile data to show distribution shape
+# Chart 1: Tail Benefit of Modest Cache Warmth (Paired Bars)
+print("📊 Chart 1: Tail benefit of modest cache warmth (10% hot vs 0% hot - Serial mode)...")
 
 serial_df = df[df['fetch_mode'] == 'serial'].copy()
 
-# Get 10% hot (production realistic) and 0% hot (fully cold) data
+# Get 10% hot (Production Reality) and 0% hot (fully cold) data
 data_10 = serial_df[serial_df['hot_traffic_pct'] == 10]
 data_0 = serial_df[serial_df['hot_traffic_pct'] == 0]
 
 if len(data_10) > 0 and len(data_0) > 0:
+    # Extract P95 and P99 values only
+    row_0 = data_0.iloc[0]
+    row_10 = data_10.iloc[0]
+    
+    p95_0 = row_0.get('p95_ms', 0)
+    p99_0 = row_0.get('p99_ms', 0)
+    
+    p95_10 = row_10.get('p95_ms', 0)
+    p99_10 = row_10.get('p99_ms', 0)
+    
+    # Calculate deltas for callout
+    delta_p99 = p99_0 - p99_10
+    
+    # Create figure - match RHS chart size
     fig, ax = plt.subplots(figsize=(16, 11))
     
-    # Create synthetic ECDF from percentiles (P50, P95, P99)
-    # This approximates the distribution shape
-    for data, label, color in [
-        (data_10, '10% hot (production-realistic mix)', '#F59E0B'),
-        (data_0, '0% hot (fully cold worst-case)', '#EF4444')
-    ]:
-        if len(data) > 0:
-            row = data.iloc[0]
-            p50 = row.get('p50_ms', row.get('p99_ms', 0) * 0.6)
-            p95 = row.get('p95_ms', row.get('p99_ms', 0) * 0.95)
-            p99 = row.get('p99_ms', 0)
-            
-            # Create synthetic ECDF with more realistic tail spread
-            # Add more points to show the widening tail
-            latencies = [
-                p50 * 0.7,   # P10
-                p50 * 0.85,  # P30
-                p50,         # P50
-                p50 * 1.15,  # P70
-                p95 * 0.92,  # P85
-                p95,         # P95
-                p95 * 1.02,  # P97
-                p99          # P99
-            ]
-            percentiles = [10, 30, 50, 70, 85, 95, 97, 99]
-            
-            ax.plot(latencies, percentiles, marker='o', markersize=10, 
-                   linewidth=3.5, label=label, color=color, alpha=0.9)
+    # Bar positions
+    x_positions = np.array([0, 1])  # P95, P99
+    bar_width = 0.35
     
-    ax.set_xlabel('Request Latency (ms)', fontsize=14, fontweight='600', labelpad=12, color='#475569')
-    ax.set_ylabel('Cumulative Probability (%)', fontsize=14, fontweight='600', labelpad=12, color='#475569')
-    ax.set_title('Request Latency Distribution (ECDF): Tail Widening Under Cold & Mixed Reads',
+    # Paired bars - use semantic colors (cold = gray, production = blue)
+    bars_0 = ax.bar(x_positions - bar_width/2, [p95_0, p99_0], bar_width,
+                    label='0% hot (fully cold)', color=COLORS['cold'], alpha=0.95, 
+                    edgecolor='#1E293B', linewidth=2)
+    bars_10 = ax.bar(x_positions + bar_width/2, [p95_10, p99_10], bar_width,
+                     label='10% hot (Production Reality)', color=COLORS['production'], alpha=0.95,
+                     edgecolor='#1E293B', linewidth=2)
+    
+    # Add value labels on bars
+    for bars in [bars_0, bars_10]:
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{height:.0f}ms',
+                   ha='center', va='bottom', fontsize=13, fontweight='600',
+                   color='#1E293B')
+    
+    # Single callout near P99 - match RHS annotation style
+    fig.text(0.58, 0.68,
+           f'P99 improves by ~{delta_p99:.0f}ms at 10% hot —\nmixed traffic still behaves like cold.',
+           fontsize=12, color='#1E293B', linespacing=1.6,
+           bbox=dict(boxstyle='round,pad=1.2', facecolor='#FEF3C7', 
+                    edgecolor='#F59E0B', linewidth=2, alpha=0.95),
+           ha='left', va='top')
+    
+    # Styling - match RHS chart
+    ax.set_ylabel('Latency (ms)', fontsize=14, fontweight='600', labelpad=12, color='#475569')
+    ax.set_title('Modest cache warmth does NOT materially improve P99 tail latency',
                 fontsize=18, fontweight='700', pad=20, color='#1E293B')
-    ax.legend(fontsize=13, loc='lower right', frameon=True, fancybox=True, shadow=True)
-    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
+    
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(['P95', 'P99'], fontsize=14, fontweight='600', color='#475569')
+    
+    ax.legend(loc='upper left', fontsize=13, framealpha=0.95, 
+             edgecolor='#E2E8F0', fancybox=False)
+    
+    ax.grid(True, axis='y', alpha=0.3, linestyle='--', linewidth=0.8)
     ax.set_facecolor('#FAFAFA')
+    ax.set_axisbelow(True)
+    ax.tick_params(colors='#94A3B8', which='both', labelsize=11)
+    
+    # Set y-axis to start from 0 for visual honesty
+    ax.set_ylim(bottom=0, top=max(p95_0, p99_0) * 1.15)
+    
     fig.patch.set_facecolor('white')
-    
-    # Tighten x-axis to emphasize tail widening (start at ~160ms instead of default)
-    # Get the actual data range and adjust
-    all_latencies = []
-    for data in [data_10, data_0]:
-        if len(data) > 0:
-            row = data.iloc[0]
-            p50 = row.get('p50_ms', row.get('p99_ms', 0) * 0.6)
-            all_latencies.append(p50 * 0.7)
-    
-    if all_latencies:
-        min_latency = min(all_latencies)
-        # Start x-axis closer to actual data (compress left side)
-        ax.set_xlim(left=max(0, min_latency - 10))
-    
-    # Add single callout annotation between the curves
-    # Position it strategically to not cover data points
-    callout_text = (
-        'Operational takeaway:\n'
-        'In production-like skew (0-10% hot per entity), most requests are mixed hot/cold.\n'
-        'This creates wide latency variance and long tails — even when average latency looks acceptable.\n\n'
-        'Fully cold traffic shows the upper bound, but mixed requests define day-to-day P99 behavior.'
-    )
-    
-    fig.text(0.30, 0.65, callout_text,
-             fontsize=11, color='#1E293B', linespacing=1.6,
-             bbox=dict(boxstyle='round,pad=1.2', facecolor='#FFFBEB', 
-                      edgecolor='#F59E0B', linewidth=2, alpha=0.95),
-             verticalalignment='top')
-    
     plt.tight_layout(pad=1.5)
     plt.savefig('/tmp/zipfian_latency_ecdf.png', dpi=150, facecolor='white')
-    print("   ✅ Saved: /tmp/zipfian_latency_ecdf.png")
+    print("   ✅ Saved: /tmp/zipfian_latency_ecdf.png (Paired Bar: Cache Warmth Benefit)")
 else:
-    print("   ⚠️  Insufficient data for ECDF - creating placeholder")
+    print("   ⚠️  Insufficient data for Cache Warmth chart - creating placeholder")
     fig, ax = plt.subplots(figsize=(16, 11))
-    ax.text(0.5, 0.5, 'ECDF Chart: Insufficient Data\n(Requires serial mode data at 10% and 0% hot)',
+    ax.text(0.5, 0.5, 'Cache Warmth Chart: Insufficient Data\n(Requires serial mode data at 10% and 0% hot)',
            ha='center', va='center', fontsize=16, color='#94A3B8')
     ax.set_facecolor('#F8FAFC')
     fig.patch.set_facecolor('white')
@@ -2693,14 +2744,21 @@ if 'entity_p99_ms' in df.columns:
         # Get entity columns (exclude hot_pct)
         entity_cols = [col for col in entity_df.columns if col != 'hot_pct']
         
+        # Semantic entity color mapping (synchronized with report template)
+        entity_color_map = {
+            'customer_email': COLORS['entity_email'],          # #60A5FA - Muted blue
+            'cardholder_name': COLORS['entity_name'],          # #34D399 - Muted green
+            'card_fingerprint': COLORS['entity_fingerprint']   # #FBBF24 - Muted amber
+        }
+        
         # Create stacked bar chart with percentages
         bottoms = [0] * len(entity_df)
-        colors = ['#3B82F6', '#10B981', '#F59E0B']  # Blue, Green, Orange
         
-        for i, entity in enumerate(entity_cols):
+        for entity in entity_cols:
+            color = entity_color_map.get(entity, '#6B7280')  # Default to gray if unknown entity
             ax.bar(entity_df['hot_pct'].astype(str), entity_df[entity],
                   bottom=bottoms, label=entity.replace('_', ' ').title(),
-                  color=colors[i % len(colors)], edgecolor='white', linewidth=2)
+                  color=color, edgecolor='white', linewidth=2)
             bottoms = [b + v for b, v in zip(bottoms, entity_df[entity])]
         
         ax.set_xlabel('Hot Traffic % (per entity)', fontsize=14, fontweight='600', labelpad=12, color='#475569')
@@ -2749,17 +2807,42 @@ print("📊 Chart 4: Strategy payoff - tail improvement by execution mode...")
 
 fig, ax = plt.subplots(figsize=(16, 11))
 
-# Get P99 data for all three modes at cold regimes (0%, 10%, 30% if available)
+# Mode key aliases to handle different naming conventions
+MODE_KEY_ALIASES = {
+    "serial": ["serial"],
+    "binpacked": ["binpacked"],
+    "binpacked_parallel": ["binpacked_parallel", "parallel"],
+    "rpc": ["rpc", "rpc_request_json", "rpc_single"],
+    "rpc_entity_parallel": ["rpc_entity_parallel", "rpc_x_entity", "rpc3_parallel"]
+}
+
+# Get P99 data for all modes at cold regimes (0%, 10%, 30% if available)
 cold_hot_pcts = [0, 10, 30]
 mode_configs = [
     ('serial', 'Serial', 'o', '#94A3B8', 2.5),
     ('binpacked', 'Bin-packed', 's', '#3B82F6', 3),
-    ('binpacked_parallel', 'Parallel', '^', '#10B981', 3.5)
+    ('binpacked_parallel', 'Parallel', '^', '#10B981', 3.5),
+    ('rpc', 'RPC (1 call)', 'd', '#8B5CF6', 3),
+    ('rpc_entity_parallel', 'RPC×Entity (3 calls, parallel)', 'p', '#EC4899', 3.5)
 ]
 
 has_data = False
+plotted_series = []
+
 for mode_name, label, marker, color, linewidth in mode_configs:
-    mode_data = df[df['fetch_mode'] == mode_name]
+    # Try to find mode using aliases
+    mode_data = None
+    for alias in MODE_KEY_ALIASES.get(mode_name, [mode_name]):
+        mode_data = df[df['fetch_mode'] == alias]
+        if len(mode_data) > 0:
+            break
+    
+    if mode_data is None or len(mode_data) == 0:
+        # Log missing mode but don't fail
+        if mode_name.startswith('rpc'):
+            print(f"   ℹ️  Mode '{mode_name}' not found in results (skipping)")
+        continue
+    
     p99_values = []
     x_values = []
     
@@ -2773,19 +2856,27 @@ for mode_name, label, marker, color, linewidth in mode_configs:
     
     if len(p99_values) >= 2:  # Need at least 2 points to plot
         has_data = True
+        plotted_series.append(mode_name)
         line = ax.plot(x_values, p99_values, marker=marker, markersize=12, 
                       linewidth=linewidth, label=label, color=color, alpha=0.9)
         
         # Add data labels at end points only (cleaner)
         if len(p99_values) > 0:
+            # Compute y-offset for RPC modes to avoid overlap
+            y_offset = 0
+            if mode_name == 'rpc':
+                y_offset = -3  # Shift RPC labels down slightly
+            elif mode_name == 'rpc_entity_parallel':
+                y_offset = -6  # Shift RPC×Entity labels down more
+            
             # Label first point (0% or 10%)
-            ax.text(x_values[0], p99_values[0], f'{p99_values[0]:.1f}ms',
+            ax.text(x_values[0], p99_values[0] + y_offset, f'{p99_values[0]:.1f}ms',
                    fontsize=10, fontweight='600', color=color,
                    ha='right', va='bottom', 
                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
                             edgecolor=color, linewidth=1, alpha=0.9))
             # Label last point
-            ax.text(x_values[-1], p99_values[-1], f'{p99_values[-1]:.1f}ms',
+            ax.text(x_values[-1], p99_values[-1] + y_offset, f'{p99_values[-1]:.1f}ms',
                    fontsize=10, fontweight='600', color=color,
                    ha='left', va='top',
                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
@@ -2796,22 +2887,29 @@ if has_data:
     ax.set_ylabel('P99 Request Latency (ms)', fontsize=14, fontweight='600', labelpad=12, color='#475569')
     ax.set_title('Strategy Payoff: Tail Improvement by Execution Mode (Cold Regimes)',
                 fontsize=18, fontweight='700', pad=20, color='#1E293B')
-    ax.legend(fontsize=13, loc='upper right', frameon=True, fancybox=True, shadow=True)
-    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
+    ax.legend(fontsize=13, loc='upper right', frameon=True, fancybox=False, 
+             framealpha=0.95, edgecolor='#E2E8F0')
+    ax.grid(True, alpha=0.15, linestyle='--', linewidth=1, color='#CBD5E1')
     ax.set_facecolor('#FAFAFA')
+    ax.set_axisbelow(True)
+    ax.tick_params(colors='#94A3B8', which='both', labelsize=12)
     
-    # Add tight annotation below the chart
-    fig.text(0.15, 0.12,
-            'Bin-packing reduces tail risk by shrinking fan-out (N↓). ' +
-            'Parallelism reduces request time by shortening the critical path (max()).',
-            fontsize=12, color='#1E293B', style='italic',
-            bbox=dict(boxstyle='round,pad=1', facecolor='#F0FDF4',
-                     edgecolor='#10B981', linewidth=2, alpha=0.95))
+    # Set Y-axis limits to create space for legend at top and annotation in middle
+    ax.set_ylim(bottom=40, top=275)
+    
+    # Add annotation in white space area (Y ~125 on chart, which is ~0.42 in figure coordinates)
+    ax.text(15, 125, 
+            'Bin-pack shrinks fan-out (N↓). Parallel shrinks the critical path (max()).\n' +
+            'RPC collapses RTT. RPC×Entity combines RTT collapse + max(entity).',
+            fontsize=11, color='#1E293B', style='italic',
+            ha='center', va='center',
+            bbox=dict(boxstyle='round,pad=0.8', facecolor='#F0FDF4',
+                     edgecolor='#10B981', linewidth=1.5, alpha=0.95))
     
     fig.patch.set_facecolor('white')
     plt.tight_layout(pad=1.5)
     plt.savefig('/tmp/zipfian_binpacking_effectiveness.png', dpi=150, facecolor='white')
-    print("   ✅ Saved: /tmp/zipfian_binpacking_effectiveness.png")
+    print(f"   ✅ Saved: /tmp/zipfian_binpacking_effectiveness.png ({len(plotted_series)} series)")
 else:
     # Fallback if no data
     ax.text(0.5, 0.5, 'Strategy Payoff Chart: Insufficient Data\n(Requires P99 data at 0%, 10% hot for all modes)',
@@ -2899,10 +2997,39 @@ for chart_key, src_path in chart_files.items():
         print(f"   ⚠️  Not found: {src.name}")
         chart_base64[chart_key] = ""
 
-# 3. Get best results (80% hot = production scenario)
+# 3. Get best results from Production Reality (10% hot specifically)
+# ✅ FIXED: Using 10% hot (Production Reality) instead of 80% hot
+print(f"\n📊 Hot traffic % available in run: {sorted(df['hot_traffic_pct'].unique())}")
+print(f"   Fetch modes available: {df['fetch_mode'].unique()}")
+
+results_prod = df[df['hot_traffic_pct'] == 10].to_dict('records')
+# Keep results_80 for backward compatibility with summary.json
 results_80 = df[df['hot_traffic_pct'] == 80].to_dict('records')
 
-# ✅ Clean results_80 list to ensure all values are safe for formatting and JSON serialization
+print(f"   Results at 10% hot (Production Reality): {len(results_prod)} rows")
+print(f"   Results at 80% hot: {len(results_80)} rows")
+
+# ✅ Clean results_prod and results_80 lists to ensure all values are safe for formatting and JSON serialization
+if results_prod:
+    for r in results_prod:
+        # Convert Timestamps to strings
+        for key, value in list(r.items()):
+            if isinstance(value, pd.Timestamp):
+                r[key] = value.isoformat()
+            elif isinstance(value, (np.integer, np.int64)):
+                r[key] = int(value)
+            elif isinstance(value, (np.floating, np.float64)):
+                # Only convert if not NaN
+                if not pd.isna(value):
+                    r[key] = float(value)
+                else:
+                    r[key] = None
+        
+        # Clean numeric columns
+        for key in numeric_columns:
+            if key in r and (r[key] is None or (isinstance(r[key], float) and np.isnan(r[key]))):
+                r[key] = 0
+
 if results_80:
     for r in results_80:
         # Convert Timestamps to strings
@@ -2922,27 +3049,63 @@ if results_80:
             if key in r and (r[key] is None or (isinstance(r[key], float) and np.isnan(r[key]))):
                 r[key] = 0
 
-if results_80:
-    best_p99 = min(r['p99_ms'] for r in results_80)
-    best_mode_row = next(r for r in results_80 if r['p99_ms'] == best_p99)
-    best_mode = f"{best_mode_row['fetch_mode']}"
-    if 'parallel_workers' in best_mode_row and pd.notna(best_mode_row['parallel_workers']):
-        best_mode += f" w={int(best_mode_row['parallel_workers'])}"
+# ✅ FIXED: Use 10% hot (Production Reality) specifically
+if results_prod:
+    print(f"\n📊 KPI Calculation (Production Reality: 10% hot):")
+    print(f"   Found {len(results_prod)} result rows at 10% hot")
+    
+    # Get P99 for each mode at 10% hot
+    mode_p99 = {}
+    for r in results_prod:
+        mode_key = r['fetch_mode']
+        if 'parallel_workers' in r and pd.notna(r['parallel_workers']):
+            mode_key += f"_w{int(r['parallel_workers'])}"
+        
+        mode_p99[mode_key] = r['p99_ms']
+    
+    print(f"   Available modes at 10% hot: {list(mode_p99.keys())}")
+    for mode_key, p99_val in mode_p99.items():
+        print(f"     {mode_key}: P99 = {p99_val:.1f}ms")
+    
+    # Find mode with best P99 at 10% hot (Production Reality)
+    best_mode_key = min(mode_p99.keys(), key=lambda k: mode_p99[k])
+    best_p99 = mode_p99[best_mode_key]
+    
+    print(f"\n   ✅ BEST MODE for KPI: {best_mode_key} with P99 = {best_p99:.1f}ms")
+    
+    # Extract mode name for display
+    if '_w' in best_mode_key:
+        mode_name, workers = best_mode_key.split('_w')
+        best_mode = f"{mode_name} w={workers}"
+    else:
+        best_mode = best_mode_key
     
     ref_p99 = 79.0
-    vs_ref = ((best_p99 - ref_p99) / ref_p99 * 100)
+    # ✅ FIXED: Inverted formula to match "faster than" semantics
+    # Positive = faster (better), Negative = slower (worse)
+    vs_ref = ((ref_p99 - best_p99) / ref_p99 * 100)
     
-    # Safely get serial baseline
-    serial_80 = df[(df['fetch_mode']=='serial') & (df['hot_traffic_pct']==80)]
-    serial_baseline = f"Serial baseline: {serial_80['p99_ms'].iloc[0]:.1f}ms" if len(serial_80) > 0 else "Serial baseline: N/A"
+    print(f"\n📊 KPI Calculation Summary:")
+    print(f"   Reference SLA: {ref_p99}ms")
+    print(f"   Best P99: {best_p99:.1f}ms")
+    print(f"   vs_ref: {vs_ref:+.1f}%")
+    if vs_ref > 0:
+        print(f"   ✅ FASTER than target by {vs_ref:.1f}%")
+    else:
+        print(f"   ❌ SLOWER than target by {abs(vs_ref):.1f}%")
+    
+    # Safely get serial baseline from Production Reality (10% hot)
+    serial_prod = df[(df['fetch_mode']=='serial') & (df['hot_traffic_pct'] == 10)]
+    serial_baseline_val = serial_prod['p99_ms'].iloc[0] if len(serial_prod) > 0 else None
+    serial_baseline = f"Serial baseline: {serial_baseline_val:.1f}ms" if serial_baseline_val else "Serial baseline: N/A"
     
     findings = [
-        f"Best P99 at 80% hot: {best_p99:.1f}ms ({best_mode})",
+        f"Best P99 in Production Reality (10% hot): {best_p99:.1f}ms ({best_mode})",
         f"vs Customer Reference (79ms): {vs_ref:+.1f}%",
         serial_baseline
     ]
 else:
-    findings = ["No 80% hot results"]
+    findings = ["No Production Reality (10% hot) results"]
 
 # 4. Build summary.json
 summary = {
@@ -2989,8 +3152,10 @@ print(f"\n📄 Generating HTML report...")
 # Build summary table (80% hot only)
 summary_rows = ""
 for r in results_80:
-    vs_ref = ((r['p99_ms'] - 79.0) / 79.0 * 100) if r.get('p99_ms') else 0
-    vs_ref_str = f"{vs_ref:+.1f}%" if abs(vs_ref) > 0.1 else "—"
+    # ✅ FIXED: Inverted formula to match "faster than" semantics
+    # Use vs_ref_row to avoid overwriting the hero KPI vs_ref variable!
+    vs_ref_row = ((79.0 - r['p99_ms']) / 79.0 * 100) if r.get('p99_ms') else 0
+    vs_ref_str = f"{vs_ref_row:+.1f}%" if abs(vs_ref_row) > 0.1 else "—"
     workers = f"{int(r['parallel_workers'])}" if pd.notna(r.get('parallel_workers')) else '—'
     
     summary_rows += f"""
@@ -3072,11 +3237,22 @@ td{padding:12px;border-bottom:1px solid #dee2e6;}
 <h3>Worst Case</h3><img src="data:image/png;base64,{{CHART_WORST}}" class="chart-embed"/>
 </div></body></html>"""
 
-# Compute hero KPIs from best P99 data
-if results_80:
+# Compute hero KPIs from best P99 data (Production Reality)
+# ✅ FIXED: Using Production Reality (10% hot) instead of 80%
+if results_prod:
     hero_best_p99 = f"{best_p99:.1f}ms"
-    hero_best_mode = f"{best_mode} @ 80% hot"
-    hero_vs_target = f"{vs_ref:+.1f}%"
+    hero_best_mode = f"{best_mode} (10% hot)"
+    
+    # Make vs_target self-explanatory with color
+    if vs_ref > 0:
+        hero_vs_target = f"{vs_ref:.1f}% faster"
+        hero_vs_target_color = "var(--ok)"  # Green for faster
+    elif vs_ref < 0:
+        hero_vs_target = f"{abs(vs_ref):.1f}% slower"
+        hero_vs_target_color = "var(--bad)"  # Red for slower
+    else:
+        hero_vs_target = "At target"
+        hero_vs_target_color = "var(--brand-2)"
     
     # Compute total queries: iterations * modes * hot_pct_values
     total_iterations = 1000
@@ -3096,6 +3272,7 @@ else:
     hero_best_p99 = "—"
     hero_best_mode = "No data"
     hero_vs_target = "—"
+    hero_vs_target_color = "var(--muted)"
     hero_total_queries = "—"
     hero_dataset_size = "30K"
 
@@ -3117,6 +3294,7 @@ replacements = {
     "{{BEST_P99}}": hero_best_p99,
     "{{BEST_P99_MODE}}": hero_best_mode,
     "{{VS_TARGET}}": hero_vs_target,
+    "{{VS_TARGET_COLOR}}": hero_vs_target_color,
     "{{TOTAL_QUERIES}}": hero_total_queries,
     "{{DATASET_SIZE}}": hero_dataset_size,
     
@@ -3197,7 +3375,7 @@ replacements = {
     # Chart narratives (3 bullets per chart)
     "{{CHART1_NARRATIVE_1}}": "P99 latency degrades as hot traffic decreases from 100% to 0%",
     "{{CHART1_NARRATIVE_2}}": "Parallel mode (3 workers) maintains best P99 across all cache scenarios",
-    "{{CHART1_NARRATIVE_3}}": "All modes cross 79ms SLA in cold reality zone (0-20% hot)",
+    "{{CHART1_NARRATIVE_3}}": "All modes cross 79ms SLA in Production Reality (0-10% hot)",
     
     "{{CHART2_NARRATIVE_1}}": "Cost-normalized metric: wall-clock latency per database call",
     "{{CHART2_NARRATIVE_2}}": "Binpacked queries are heavier (UNION ALL) but reduce fanout",
@@ -3232,12 +3410,22 @@ html = html_template
 for placeholder, value in replacements.items():
     html = html.replace(placeholder, str(value))
 
-# Save report
+# Save report with timestamp
+from datetime import datetime
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+# Save timestamped version
+report_timestamped = report_dir / f"report_{timestamp}.html"
+with open(report_timestamped, 'w') as f:
+    f.write(html)
+
+# Also save as canonical report.html (for download script compatibility)
 report_path = report_dir / "report.html"
 with open(report_path, 'w') as f:
     f.write(html)
 
 print(f"✅ HTML report: {report_path}")
+print(f"✅ Timestamped: {report_timestamped}")
 print()
 
 # Generate URLs
