@@ -1626,6 +1626,17 @@ fig, ax = plt.subplots(figsize=(14, 7))
 
 # Get representative row for each mode (use Production Reality hot% as reference)
 queries_data = []
+
+# Neutral color palette for query count (no SLA implications)
+# Use grays and muted blues to show progression without "success" signals
+QUERY_COUNT_COLORS = {
+    'serial': '#6B7280',           # Gray - baseline (worst: 30 queries)
+    'binpacked': '#60A5FA',        # Muted blue - better (10 queries)
+    'binpacked_parallel': '#60A5FA',  # Same muted blue (10 queries)
+    'rpc_request_json': '#3B82F6',    # Slightly darker blue - best (1 query)
+    'rpc3_parallel': '#3B82F6'        # Slightly darker blue (3 queries)
+}
+
 for mode in modes:
     mode_df = df[(df['fetch_mode'] == mode) & (df['hot_traffic_pct'] == 80)]
     if len(mode_df) > 0:
@@ -1643,7 +1654,7 @@ for mode in modes:
             'mode': mode,
             'label': mode_labels[mode].replace('\n', ' '),
             'queries': queries,
-            'color': mode_colors[mode]
+            'color': QUERY_COUNT_COLORS[mode]
         })
 
 if queries_data:
