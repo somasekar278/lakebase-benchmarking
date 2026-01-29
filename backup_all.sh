@@ -73,28 +73,34 @@ echo "✅ Postgres dumps complete"
 echo ""
 
 # ============================================================
-# 2. JOBS
+# 2. JOBS - BACKUP ALL JOBS AUTOMATICALLY
 # ============================================================
-echo "📋 Step 2: Backing up job definitions..."
+echo "📋 Step 2: Backing up ALL job definitions..."
 databricks jobs list --profile "$PROFILE" > "$BACKUP_DIR/jobs/jobs_list.txt"
 
 echo "Found jobs:"
 cat "$BACKUP_DIR/jobs/jobs_list.txt"
 echo ""
 
-read -p "Enter benchmark job ID (or press Enter to skip): " BENCH_JOB_ID
-read -p "Enter viz job ID (or press Enter to skip): " VIZ_JOB_ID
+# Extract all job IDs and back them up
+JOB_COUNT=0
+while IFS= read -r line; do
+  # Extract job ID (first column)
+  JOB_ID=$(echo "$line" | awk '{print $1}')
+  
+  # Skip header lines and empty lines
+  if [[ "$JOB_ID" =~ ^[0-9]+$ ]]; then
+    echo "  Backing up job $JOB_ID..."
+    databricks jobs get --job-id "$JOB_ID" --profile "$PROFILE" > "$BACKUP_DIR/jobs/job_${JOB_ID}.json" 2>/dev/null
+    if [ $? -eq 0 ]; then
+      ((JOB_COUNT++))
+    else
+      echo "    ⚠️  Failed to backup job $JOB_ID"
+    fi
+  fi
+done < "$BACKUP_DIR/jobs/jobs_list.txt"
 
-if [ -n "$BENCH_JOB_ID" ]; then
-  databricks jobs get --job-id "$BENCH_JOB_ID" --profile "$PROFILE" > "$BACKUP_DIR/jobs/benchmark_job_${BENCH_JOB_ID}.json"
-  echo "✅ Backed up benchmark job $BENCH_JOB_ID"
-fi
-
-if [ -n "$VIZ_JOB_ID" ]; then
-  databricks jobs get --job-id "$VIZ_JOB_ID" --profile "$PROFILE" > "$BACKUP_DIR/jobs/viz_job_${VIZ_JOB_ID}.json"
-  echo "✅ Backed up viz job $VIZ_JOB_ID"
-fi
-
+echo "✅ Backed up $JOB_COUNT jobs"
 echo ""
 
 # ============================================================
@@ -120,20 +126,16 @@ echo "✅ Config files backed up"
 echo ""
 
 # ============================================================
-# 5. GENERATED REPORTS (optional)
+# 5. GENERATED REPORTS - AUTO DOWNLOAD
 # ============================================================
-read -p "Download generated reports? (y/n): " DOWNLOAD_REPORTS
-if [ "$DOWNLOAD_REPORTS" = "y" ]; then
-  echo "📄 Downloading reports..."
-  databricks fs cp --profile "$PROFILE" -r dbfs:/FileStore/benchmark_reports "$BACKUP_DIR/reports/" || echo "⚠️  No reports found"
-  echo "✅ Reports downloaded"
-fi
+echo "📄 Step 5: Downloading generated reports..."
+databricks fs cp --profile "$PROFILE" -r dbfs:/FileStore/benchmark_reports "$BACKUP_DIR/reports/" 2>/dev/null && echo "✅ Reports downloaded" || echo "⚠️  No reports found (this is OK)"
 echo ""
 
 # ============================================================
 # 6. COMPRESS BACKUP
 # ============================================================
-echo "🗜️  Step 5: Compressing backup..."
+echo "🗜️  Step 6: Compressing backup..."
 tar -czf "${BACKUP_DIR}.tar.gz" "$BACKUP_DIR"
 BACKUP_SIZE=$(du -h "${BACKUP_DIR}.tar.gz" | cut -f1)
 echo "✅ Compressed to: ${BACKUP_DIR}.tar.gz ($BACKUP_SIZE)"
@@ -142,7 +144,7 @@ echo ""
 # ============================================================
 # 7. COPY TO LOCAL VOLUME
 # ============================================================
-echo "📦 Step 6: Copying to $LOCAL_VOLUME..."
+echo "📦 Step 7: Copying to $LOCAL_VOLUME..."
 
 if [ -d "$LOCAL_VOLUME" ]; then
     # Create backup directory in local volume
