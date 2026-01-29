@@ -29,36 +29,42 @@ echo ""
 # 1. POSTGRES TABLES
 # ============================================================
 echo "📊 Step 1: Backing up Postgres tables..."
-echo "⚠️  You'll need to enter Lakebase credentials"
+echo "📖 Reading credentials from databricks.yml..."
 echo ""
 
-read -p "Lakebase host (e.g., lakebase.example.com): " LAKEBASE_HOST
-read -p "Lakebase database name: " LAKEBASE_DB
-read -p "Lakebase username: " LAKEBASE_USER
+# Extract credentials from databricks.yml (dev target)
+LAKEBASE_HOST=$(grep -A 20 "targets:" databricks.yml | grep "lakebase_host:" | head -1 | awk '{print $2}')
+LAKEBASE_DB=$(grep -A 20 "targets:" databricks.yml | grep "lakebase_database:" | head -1 | awk '{print $2}')
+LAKEBASE_USER=$(grep "lakebase_user:" databricks.yml | grep "default:" | awk '{print $2}')
+LAKEBASE_PASSWORD=$(grep "lakebase_password:" databricks.yml | grep "default:" | awk -F': ' '{print $2}')
 
+echo "✅ Found credentials:"
+echo "  Host: $LAKEBASE_HOST"
+echo "  Database: $LAKEBASE_DB"
+echo "  User: $LAKEBASE_USER"
 echo ""
 echo "Dumping tables..."
 
 # Main results table (V5)
-PGPASSWORD="" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
+PGPASSWORD="$LAKEBASE_PASSWORD" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
   -t features.zipfian_feature_serving_results_v5 \
   --data-only --column-inserts \
   > "$BACKUP_DIR/postgres/zipfian_results_v5.sql" 2>/dev/null || echo "⚠️  V5 results table not found or empty"
 
 # Request timing
-PGPASSWORD="" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
+PGPASSWORD="$LAKEBASE_PASSWORD" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
   -t features.zipfian_request_timing \
   --data-only --column-inserts \
   > "$BACKUP_DIR/postgres/zipfian_request_timing.sql" 2>/dev/null || echo "⚠️  Request timing table not found or empty"
 
 # Slow query log
-PGPASSWORD="" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
+PGPASSWORD="$LAKEBASE_PASSWORD" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
   -t features.zipfian_slow_query_log \
   --data-only --column-inserts \
   > "$BACKUP_DIR/postgres/zipfian_slow_query_log.sql" 2>/dev/null || echo "⚠️  Slow query log table not found or empty"
 
 # All zipfian tables (comprehensive)
-PGPASSWORD="" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
+PGPASSWORD="$LAKEBASE_PASSWORD" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
   -n features --table='zipfian*' \
   --data-only --column-inserts \
   > "$BACKUP_DIR/postgres/all_zipfian_tables.sql" 2>/dev/null || echo "⚠️  Some tables may not exist"
