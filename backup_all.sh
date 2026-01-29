@@ -35,8 +35,8 @@ echo ""
 # Extract credentials from databricks.yml (dev target)
 LAKEBASE_HOST=$(grep -A 20 "targets:" databricks.yml | grep "lakebase_host:" | head -1 | awk '{print $2}')
 LAKEBASE_DB=$(grep -A 20 "targets:" databricks.yml | grep "lakebase_database:" | head -1 | awk '{print $2}')
-LAKEBASE_USER=$(grep -A 1 "lakebase_user:" databricks.yml | grep "default:" | awk '{print $2}')
-LAKEBASE_PASSWORD=$(grep -A 1 "lakebase_password:" databricks.yml | grep "default:" | awk '{print $2}')
+LAKEBASE_USER=$(grep -A 2 "lakebase_user:" databricks.yml | grep "default:" | awk '{print $2}')
+LAKEBASE_PASSWORD=$(grep -A 2 "lakebase_password:" databricks.yml | grep "default:" | awk '{print $2}')
 
 echo "✅ Found credentials:"
 echo "  Host: $LAKEBASE_HOST"
