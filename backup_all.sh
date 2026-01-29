@@ -43,31 +43,31 @@ echo "  Host: $LAKEBASE_HOST"
 echo "  Database: $LAKEBASE_DB"
 echo "  User: $LAKEBASE_USER"
 echo ""
-echo "Dumping tables..."
+echo "Dumping tables from schema 'features'..."
 
 # Main results table (V5)
 PGPASSWORD="$LAKEBASE_PASSWORD" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
-  -t features.zipfian_feature_serving_results_v5 \
+  -n features -t zipfian_feature_serving_results_v5 \
   --data-only --column-inserts \
-  > "$BACKUP_DIR/postgres/zipfian_results_v5.sql" 2>/dev/null || echo "⚠️  V5 results table not found or empty"
+  > "$BACKUP_DIR/postgres/zipfian_results_v5.sql" 2>&1 | grep -v "no matching tables" || echo "⚠️  V5 results table not found or empty"
 
 # Request timing
 PGPASSWORD="$LAKEBASE_PASSWORD" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
-  -t features.zipfian_request_timing \
+  -n features -t zipfian_request_timing \
   --data-only --column-inserts \
-  > "$BACKUP_DIR/postgres/zipfian_request_timing.sql" 2>/dev/null || echo "⚠️  Request timing table not found or empty"
+  > "$BACKUP_DIR/postgres/zipfian_request_timing.sql" 2>&1 | grep -v "no matching tables" || echo "⚠️  Request timing table not found or empty"
 
 # Slow query log
 PGPASSWORD="$LAKEBASE_PASSWORD" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
-  -t features.zipfian_slow_query_log \
+  -n features -t zipfian_slow_query_log \
   --data-only --column-inserts \
-  > "$BACKUP_DIR/postgres/zipfian_slow_query_log.sql" 2>/dev/null || echo "⚠️  Slow query log table not found or empty"
+  > "$BACKUP_DIR/postgres/zipfian_slow_query_log.sql" 2>&1 | grep -v "no matching tables" || echo "⚠️  Slow query log table not found or empty"
 
-# All zipfian tables (comprehensive)
+# All zipfian tables (comprehensive backup)
 PGPASSWORD="$LAKEBASE_PASSWORD" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
-  -n features --table='zipfian*' \
+  -n features -t 'zipfian*' \
   --data-only --column-inserts \
-  > "$BACKUP_DIR/postgres/all_zipfian_tables.sql" 2>/dev/null || echo "⚠️  Some tables may not exist"
+  > "$BACKUP_DIR/postgres/all_zipfian_tables.sql" 2>&1 | grep -v "no matching tables" || echo "⚠️  Some tables may not exist"
 
 echo "✅ Postgres dumps complete"
 echo ""
