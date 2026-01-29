@@ -253,3 +253,32 @@ resources:
           - ${workspace.current_user.userName}
         on_success:
           - ${workspace.current_user.userName}
+    
+    # CSV BACKUP JOB - Run before workspace wipeout
+    csv_backup:
+      name: "[${bundle.target}] CSV Backup to DBFS"
+      description: "Backup all CSVs from UC Volume to DBFS for download"
+      
+      tasks:
+        - task_key: backup_csvs
+          description: "Compress and backup CSVs from UC Volume"
+          existing_cluster_id: "0120-120746-h595w64t"
+          
+          notebook_task:
+            notebook_path: ../notebooks/backup_csvs_from_volume.py
+          
+          timeout_seconds: 7200  # 2 hours
+          max_retries: 0
+      
+      max_concurrent_runs: 1
+      
+      tags:
+        Environment: ${bundle.target}
+        Project: fraud-benchmarking
+        Type: backup
+      
+      email_notifications:
+        on_failure:
+          - ${workspace.current_user.userName}
+        on_success:
+          - ${workspace.current_user.userName}
