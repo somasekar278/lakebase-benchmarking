@@ -1,0 +1,197 @@
+#!/bin/bash
+# Complete Backup Script - Run before workspace wipeout
+# Usage: ./backup_all.sh
+
+set -e
+
+echo "=========================================="
+echo "🚨 WORKSPACE BACKUP - PRE-WIPEOUT"
+echo "=========================================="
+echo ""
+
+# Configuration
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="./workspace_backup_${TIMESTAMP}"
+LOCAL_VOLUME="/Volumes/Official"
+PROFILE="fe-sandbox-one-env-som-workspace-v4"
+
+# Create backup structure
+mkdir -p "$BACKUP_DIR"/{postgres,csvs,jobs,notebooks,reports,config}
+
+echo "📦 Backup strategy:"
+echo "  1. Local staging: $BACKUP_DIR"
+echo "  2. Final destination: $LOCAL_VOLUME"
+
+echo "📁 Backup directory: $BACKUP_DIR"
+echo ""
+
+# ============================================================
+# 1. POSTGRES TABLES
+# ============================================================
+echo "📊 Step 1: Backing up Postgres tables..."
+echo "⚠️  You'll need to enter Lakebase credentials"
+echo ""
+
+read -p "Lakebase host (e.g., lakebase.example.com): " LAKEBASE_HOST
+read -p "Lakebase database name: " LAKEBASE_DB
+read -p "Lakebase username: " LAKEBASE_USER
+
+echo ""
+echo "Dumping tables..."
+
+# Main results table (V5)
+PGPASSWORD="" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
+  -t features.zipfian_feature_serving_results_v5 \
+  --data-only --column-inserts \
+  > "$BACKUP_DIR/postgres/zipfian_results_v5.sql" 2>/dev/null || echo "⚠️  V5 results table not found or empty"
+
+# Request timing
+PGPASSWORD="" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
+  -t features.zipfian_request_timing \
+  --data-only --column-inserts \
+  > "$BACKUP_DIR/postgres/zipfian_request_timing.sql" 2>/dev/null || echo "⚠️  Request timing table not found or empty"
+
+# Slow query log
+PGPASSWORD="" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
+  -t features.zipfian_slow_query_log \
+  --data-only --column-inserts \
+  > "$BACKUP_DIR/postgres/zipfian_slow_query_log.sql" 2>/dev/null || echo "⚠️  Slow query log table not found or empty"
+
+# All zipfian tables (comprehensive)
+PGPASSWORD="" pg_dump -h "$LAKEBASE_HOST" -U "$LAKEBASE_USER" -d "$LAKEBASE_DB" \
+  -n features --table='zipfian*' \
+  --data-only --column-inserts \
+  > "$BACKUP_DIR/postgres/all_zipfian_tables.sql" 2>/dev/null || echo "⚠️  Some tables may not exist"
+
+echo "✅ Postgres dumps complete"
+echo ""
+
+# ============================================================
+# 2. JOBS
+# ============================================================
+echo "📋 Step 2: Backing up job definitions..."
+databricks jobs list --profile "$PROFILE" > "$BACKUP_DIR/jobs/jobs_list.txt"
+
+echo "Found jobs:"
+cat "$BACKUP_DIR/jobs/jobs_list.txt"
+echo ""
+
+read -p "Enter benchmark job ID (or press Enter to skip): " BENCH_JOB_ID
+read -p "Enter viz job ID (or press Enter to skip): " VIZ_JOB_ID
+
+if [ -n "$BENCH_JOB_ID" ]; then
+  databricks jobs get --job-id "$BENCH_JOB_ID" --profile "$PROFILE" > "$BACKUP_DIR/jobs/benchmark_job_${BENCH_JOB_ID}.json"
+  echo "✅ Backed up benchmark job $BENCH_JOB_ID"
+fi
+
+if [ -n "$VIZ_JOB_ID" ]; then
+  databricks jobs get --job-id "$VIZ_JOB_ID" --profile "$PROFILE" > "$BACKUP_DIR/jobs/viz_job_${VIZ_JOB_ID}.json"
+  echo "✅ Backed up viz job $VIZ_JOB_ID"
+fi
+
+echo ""
+
+# ============================================================
+# 3. NOTEBOOKS
+# ============================================================
+echo "📓 Step 3: Backing up notebooks..."
+cp -r notebooks/* "$BACKUP_DIR/notebooks/"
+echo "✅ Notebooks backed up"
+echo ""
+
+# ============================================================
+# 4. CONFIG FILES
+# ============================================================
+echo "⚙️  Step 4: Backing up config files..."
+cp databricks.yml "$BACKUP_DIR/config/" 2>/dev/null || echo "⚠️  databricks.yml not found"
+cp -r resources "$BACKUP_DIR/config/" 2>/dev/null || echo "⚠️  resources/ not found"
+cp requirements.txt "$BACKUP_DIR/config/" 2>/dev/null || echo "⚠️  requirements.txt not found"
+cp report_template.html "$BACKUP_DIR/config/"
+cp *.sql "$BACKUP_DIR/config/" 2>/dev/null || true
+cp *.sh "$BACKUP_DIR/config/" 2>/dev/null || true
+cp *.md "$BACKUP_DIR/config/" 2>/dev/null || true
+echo "✅ Config files backed up"
+echo ""
+
+# ============================================================
+# 5. GENERATED REPORTS (optional)
+# ============================================================
+read -p "Download generated reports? (y/n): " DOWNLOAD_REPORTS
+if [ "$DOWNLOAD_REPORTS" = "y" ]; then
+  echo "📄 Downloading reports..."
+  databricks fs cp --profile "$PROFILE" -r dbfs:/FileStore/benchmark_reports "$BACKUP_DIR/reports/" || echo "⚠️  No reports found"
+  echo "✅ Reports downloaded"
+fi
+echo ""
+
+# ============================================================
+# 6. COMPRESS BACKUP
+# ============================================================
+echo "🗜️  Step 5: Compressing backup..."
+tar -czf "${BACKUP_DIR}.tar.gz" "$BACKUP_DIR"
+BACKUP_SIZE=$(du -h "${BACKUP_DIR}.tar.gz" | cut -f1)
+echo "✅ Compressed to: ${BACKUP_DIR}.tar.gz ($BACKUP_SIZE)"
+echo ""
+
+# ============================================================
+# 7. COPY TO LOCAL VOLUME
+# ============================================================
+echo "📦 Step 6: Copying to $LOCAL_VOLUME..."
+
+if [ -d "$LOCAL_VOLUME" ]; then
+    # Create backup directory in local volume
+    mkdir -p "$LOCAL_VOLUME/lakebase_backups"
+    
+    # Copy compressed backup
+    cp "${BACKUP_DIR}.tar.gz" "$LOCAL_VOLUME/lakebase_backups/"
+    
+    # Also keep uncompressed copy for easy access
+    cp -r "$BACKUP_DIR" "$LOCAL_VOLUME/lakebase_backups/"
+    
+    echo "✅ Copied to $LOCAL_VOLUME/lakebase_backups/"
+    echo ""
+    
+    # Show space used
+    VOLUME_USAGE=$(du -sh "$LOCAL_VOLUME/lakebase_backups" | cut -f1)
+    VOLUME_AVAILABLE=$(df -h "$LOCAL_VOLUME" | awk 'NR==2 {print $4}')
+    echo "💾 Volume status:"
+    echo "  Used: $VOLUME_USAGE"
+    echo "  Available: $VOLUME_AVAILABLE"
+else
+    echo "⚠️  $LOCAL_VOLUME not found - backup saved to current directory only"
+    echo "  You can manually copy later: cp ${BACKUP_DIR}.tar.gz /Volumes/Official/"
+fi
+echo ""
+
+# ============================================================
+# SUMMARY
+# ============================================================
+echo "=========================================="
+echo "✅ BACKUP COMPLETE"
+echo "=========================================="
+echo ""
+echo "📦 Local staging: ${BACKUP_DIR}.tar.gz ($BACKUP_SIZE)"
+if [ -d "$LOCAL_VOLUME" ]; then
+    echo "📦 Volume backup: $LOCAL_VOLUME/lakebase_backups/"
+fi
+echo ""
+echo "Contents:"
+echo "  ✓ Postgres tables (all zipfian_* tables)"
+echo "  ✓ Job definitions"
+echo "  ✓ Notebooks (all .py files)"
+echo "  ✓ Config files (databricks.yml, requirements.txt, etc.)"
+echo "  ✓ SQL scripts and shell scripts"
+echo "  ✓ Documentation (.md files)"
+if [ "$DOWNLOAD_REPORTS" = "y" ]; then
+  echo "  ✓ Generated reports"
+fi
+echo ""
+echo "⚠️  STILL NEEDED:"
+echo "  - CSVs from UC Volume:"
+echo "    1. Upload backup_csvs_from_volume.py to Databricks"
+echo "    2. Run the notebook"
+echo "    3. Run ./download_backup_to_volume.sh"
+echo ""
+echo "💾 Final location: $LOCAL_VOLUME/lakebase_backups/"
+echo "🔐 Keep this backup safe! Workspace wipes Saturday."
+echo "=========================================="

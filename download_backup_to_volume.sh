@@ -6,19 +6,23 @@ set -e
 
 PROFILE="fe-sandbox-one-env-som-workspace-v4"
 DBFS_BACKUP_PATH="dbfs:/FileStore/backups/"
-LOCAL_DESTINATION="/Volumes/Official"
+LOCAL_DESTINATION="/Volumes/Official/lakebase_backups/csvs"
 
 echo "=========================================="
 echo "📥 DOWNLOAD BACKUP TO /Volumes/Official"
 echo "=========================================="
 echo ""
 
-# Check if destination exists
-if [ ! -d "$LOCAL_DESTINATION" ]; then
-    echo "❌ Error: $LOCAL_DESTINATION does not exist!"
+# Create destination directory if it doesn't exist
+mkdir -p "$LOCAL_DESTINATION"
+
+if [ ! -d "/Volumes/Official" ]; then
+    echo "❌ Error: /Volumes/Official does not exist!"
     echo "   Please check the path and try again."
     exit 1
 fi
+
+echo "📁 Backup location: $LOCAL_DESTINATION"
 
 # Check available space
 AVAILABLE_GB=$(df -Hg "$LOCAL_DESTINATION" | awk 'NR==2 {print $4}' | sed 's/G//')
