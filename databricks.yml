@@ -7,11 +7,10 @@ sync:
   - generated/*
   - notebooks/*
   - utils/*
-  - core/*
-  - backends/*
-  - config.py
-  - setup.py
-  - report_template.html
+  - templates/*
+  - data/*
+  - setup/*
+  - sql/*
 targets:
   dev:
     mode: development

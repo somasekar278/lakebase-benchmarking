@@ -133,7 +133,7 @@ SLOW_QUERY_THRESHOLD_MS = float(dbutils.widgets.get("slow_query_threshold_ms") o
 
 # ✅ Request/Entity-level slow event thresholds
 SLA_TARGET_MS = 79  # P99 target (already used elsewhere)
-REQUEST_SLOW_THRESHOLD_MS = 100  # Requests exceeding this are logged as slow
+REQUEST_SLOW_THRESHOLD_MS = 79  # Requests exceeding SLA target are logged as slow (aligned with SLA)
 ENTITY_SLOW_THRESHOLD_MS = 60  # Entity wall-clock (DB + pool wait) exceeding this
 
 # ✅ Column projection
