@@ -138,3 +138,6 @@ run_v*.py
 trigger_*.py
 upload_*.py
 
+# Debug notebooks (keep local only)
+notebooks/test_import.py
+
