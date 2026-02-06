@@ -1,42 +1,52 @@
 # Jobs configuration for Databricks Asset Bundles
 # Fraud feature benchmarking jobs
+#
+# No cluster-scoped libraries: notebooks install deps via %pip (generate_csvs: none;
+# run_pipelined_load_inline: psycopg[binary,pool]). Do not add cluster libraries here.
 
 resources:
   jobs:
     # ALL 30 TABLES: 16.6B rows total
     fraud_all_tables:
       name: "[${bundle.target}] Full Load: All 30 Tables (16.6B rows)"
-      description: "Load all 30 fraud feature tables with correct row counts"
+      description: "Load all 30 fraud feature tables - all config from databricks.yml"
       
       tasks:
         - task_key: generate_csvs
           description: "Task 1: Generate CSVs for all 30 tables"
-          existing_cluster_id: "0120-120746-h595w64t"
+          
+          new_cluster:
+            spark_version: ${var.cluster_spark_version}
+            node_type_id: ${var.cluster_node_type}
+            num_workers: ${var.cluster_num_workers}
+            spark_conf:
+              spark.databricks.cluster.profile: serverless
+              spark.databricks.repl.allowedLanguages: python,sql
           
           notebook_task:
             notebook_path: ../notebooks/generate_csvs.py
             base_parameters:
-              lakebase_host: ${var.lakebase_host}
-              lakebase_database: ${var.lakebase_database}
-              lakebase_schema: ${var.lakebase_schema}
-              lakebase_user: ${var.lakebase_user}
-              lakebase_password: ${var.lakebase_password}
-              ddl_file_path: "${workspace.file_path}/generated/fraud_feature_tables.sql"
-              rows_per_table_file: "${workspace.file_path}/generated/fraud_tables_row_counts.txt"
               uc_volume_path: "/Volumes/${var.catalog}/${var.schema}/${var.volume}"
-              csv_only: "true"
+              ddl_file_path: "/Volumes/${var.catalog}/${var.schema}/${var.volume}/fraud_feature_tables_30_COMPLETE.sql"
+              rows_per_table_file: "/Volumes/${var.catalog}/${var.schema}/${var.volume}/fraud_tables_row_counts_30_COMPLETE.txt"
           
-          timeout_seconds: 86400  # 24 hours
           max_retries: 0
         
         - task_key: pipelined_load
           description: "Task 2: Pipelined Load (COPY → INDEX → SWAP)"
           depends_on:
             - task_key: generate_csvs
-          existing_cluster_id: "0120-120746-h595w64t"
+          
+          new_cluster:
+            spark_version: ${var.cluster_spark_version}
+            node_type_id: ${var.cluster_node_type}
+            num_workers: ${var.cluster_num_workers}
+            spark_conf:
+              spark.databricks.cluster.profile: serverless
+              spark.databricks.repl.allowedLanguages: python,sql
           
           notebook_task:
-            notebook_path: ../notebooks/run_pipelined_load.py
+            notebook_path: ../notebooks/run_pipelined_load_inline.py
             base_parameters:
               lakebase_host: ${var.lakebase_host}
               lakebase_database: ${var.lakebase_database}
@@ -45,7 +55,6 @@ resources:
               lakebase_password: ${var.lakebase_password}
               uc_volume_path: "/Volumes/${var.catalog}/${var.schema}/${var.volume}"
           
-          timeout_seconds: 86400  # 24 hours
           max_retries: 0
       
       max_concurrent_runs: 1
@@ -247,35 +256,6 @@ resources:
         Project: fraud-benchmarking
         Type: test
         Mode: rpc_request_json
-      
-      email_notifications:
-        on_failure:
-          - ${workspace.current_user.userName}
-        on_success:
-          - ${workspace.current_user.userName}
-    
-    # CSV BACKUP JOB - Run before workspace wipeout
-    csv_backup:
-      name: "[${bundle.target}] CSV Backup to DBFS"
-      description: "Backup all CSVs from UC Volume to DBFS for download"
-      
-      tasks:
-        - task_key: backup_csvs
-          description: "Compress and backup CSVs from UC Volume"
-          existing_cluster_id: "0120-120746-h595w64t"
-          
-          notebook_task:
-            notebook_path: ../notebooks/backup_csvs_from_volume.py
-          
-          timeout_seconds: 7200  # 2 hours
-          max_retries: 0
-      
-      max_concurrent_runs: 1
-      
-      tags:
-        Environment: ${bundle.target}
-        Project: fraud-benchmarking
-        Type: backup
       
       email_notifications:
         on_failure:

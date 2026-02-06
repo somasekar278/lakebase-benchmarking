@@ -3,6 +3,7 @@
 # MAGIC # Generate CSVs for All 30 Fraud Feature Tables
 # MAGIC 
 # MAGIC Creates tables + generates CSV files (no loading to Lakebase).
+# MAGIC No cluster-scoped libraries required (PySpark + UC Volume python_modules only).
 
 # COMMAND ----------
 
@@ -12,29 +13,31 @@ import time
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import rand, col, concat_ws, lit, sha2, from_unixtime, date_format
 
+# COMMAND ----------
+
+# Get parameters from job configuration (databricks.yml variables)
+# No hardcoded defaults - all paths configured via bundle
+uc_volume_path = dbutils.widgets.get("uc_volume_path")
+ddl_file_path = dbutils.widgets.get("ddl_file_path")
+rows_per_table_file = dbutils.widgets.get("rows_per_table_file")
+
 # Add UC Volume to path for importing validators
-sys.path.insert(0, '/Volumes/benchmark/data_load/benchmark_data_dev/python_modules')
+python_modules_path = f'{uc_volume_path}/python_modules'
+print(f"🔍 Adding to sys.path: {python_modules_path}")
+sys.path.insert(0, python_modules_path)
+
+# Verify the path exists and list its contents
+import os
+if os.path.exists(python_modules_path):
+    print(f"✅ Path exists: {python_modules_path}")
+    print(f"📁 Contents: {os.listdir(python_modules_path)}")
+else:
+    print(f"❌ Path does NOT exist: {python_modules_path}")
+    print(f"💡 Current sys.path: {sys.path[:3]}")
 
 # Import validator
 from csv_timestamp_validator import validate_csv_timestamps, validate_csv_columns_match_ddl
-
-# COMMAND ----------
-
-# Get parameters
-try:
-    uc_volume_path = dbutils.widgets.get("uc_volume_path")
-except:
-    uc_volume_path = "/Volumes/benchmark/data_load/benchmark_data_dev"
-
-try:
-    ddl_file_path = dbutils.widgets.get("ddl_file_path")
-except:
-    ddl_file_path = "/Volumes/benchmark/data_load/benchmark_data_dev/fraud_feature_tables.sql"
-
-try:
-    rows_per_table_file = dbutils.widgets.get("rows_per_table_file")
-except:
-    rows_per_table_file = "/Volumes/benchmark/data_load/benchmark_data_dev/fraud_tables_row_counts.txt"
+print("✅ Successfully imported csv_timestamp_validator")
 
 # Read row counts from file
 print(f"📖 Reading row counts from: {rows_per_table_file}")

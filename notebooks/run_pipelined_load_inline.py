@@ -9,6 +9,11 @@
 
 # COMMAND ----------
 
+# No cluster-scoped libraries required. Install runtime deps here (matches requirements.txt).
+# MAGIC %pip install psycopg[binary,pool] --quiet
+
+# COMMAND ----------
+
 import os
 import sys
 import logging
@@ -53,46 +58,30 @@ def silence_psycopg_logging(level=logging.ERROR):
 
 silence_psycopg_logging()
 
-# Add UC Volume python_modules to path
-sys.path.insert(0, '/Volumes/benchmark/data_load/benchmark_data_dev/python_modules')
-
 # COMMAND ----------
 
-# Get parameters
-try:
-    lakebase_host = dbutils.widgets.get("lakebase_host")
-except:
-    lakebase_host = "ep-gentle-sea-d3ir52og.database.eu-west-1.cloud.databricks.com"
+# Get parameters from job configuration (databricks.yml variables)
+# No hardcoded defaults - all configuration comes from bundle
+lakebase_host = dbutils.widgets.get("lakebase_host")
+lakebase_database = dbutils.widgets.get("lakebase_database")
+lakebase_schema = dbutils.widgets.get("lakebase_schema")
+lakebase_user = dbutils.widgets.get("lakebase_user")
+lakebase_password = dbutils.widgets.get("lakebase_password")
+uc_volume_path = dbutils.widgets.get("uc_volume_path")
 
-try:
-    lakebase_database = dbutils.widgets.get("lakebase_database")
-except:
-    lakebase_database = "benchmark"
-
-try:
-    lakebase_user = dbutils.widgets.get("lakebase_user")
-except:
-    lakebase_user = "fraud_benchmark_user"
-
-try:
-    lakebase_password = dbutils.widgets.get("lakebase_password")
-except:
-    lakebase_password = ""  # Set via Databricks widget or environment variable
-
+# Optional parameters with sensible defaults
 try:
     ddl_file_path = dbutils.widgets.get("ddl_file_path")
 except:
-    ddl_file_path = "/Volumes/benchmark/data_load/benchmark_data_dev/fraud_feature_tables.sql"
-
-try:
-    uc_volume_path = dbutils.widgets.get("uc_volume_path")
-except:
-    uc_volume_path = "/Volumes/benchmark/data_load/benchmark_data_dev"
+    ddl_file_path = f"{uc_volume_path}/fraud_feature_tables_30_COMPLETE.sql"
 
 try:
     rows_per_table_file = dbutils.widgets.get("rows_per_table_file")
 except:
-    rows_per_table_file = "/Volumes/benchmark/data_load/benchmark_data_dev/fraud_tables_row_counts_30_COMPLETE.txt"
+    rows_per_table_file = f"{uc_volume_path}/fraud_tables_row_counts_30_COMPLETE.txt"
+
+# Add UC Volume python_modules to path
+sys.path.insert(0, f'{uc_volume_path}/python_modules')
 
 # Build connection string
 conninfo = (
